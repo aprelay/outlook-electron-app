@@ -18,6 +18,6 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/renderer"],
+  "include": ["src/renderer", "src/dashboard"],
   "references": [{ "path": "./tsconfig.main.json" }]
 }
