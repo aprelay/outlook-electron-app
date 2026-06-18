@@ -1,7 +1,8 @@
 interface Env {}
 
 const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
-const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/token';
+const RESOURCE = 'https://graph.microsoft.com';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const headers = {
@@ -24,7 +25,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const body = new URLSearchParams({
       client_id: CLIENT_ID,
       grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      device_code: reqBody.deviceCode,
+      code: reqBody.deviceCode,
+      resource: RESOURCE,
     });
 
     const response = await fetch(TOKEN_URL, {
@@ -54,7 +56,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         );
       }
 
-      if (errorCode === 'expired_token') {
+      if (errorCode === 'code_expired') {
         return new Response(
           JSON.stringify({ status: 'expired' }),
           { status: 200, headers }
@@ -78,7 +80,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         refreshToken: data.refresh_token,
         expiresIn: data.expires_in,
         tokenType: data.token_type,
-        scope: data.scope,
+        resource: data.resource,
       }),
       { status: 200, headers }
     );

@@ -1,10 +1,10 @@
 interface Env {}
 
 const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
-const DEVICE_CODE_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
-const SCOPES = 'openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send MailboxSettings.Read';
+const DEVICE_CODE_URL = 'https://login.microsoftonline.com/common/oauth2/devicecode';
+const RESOURCE = 'https://graph.microsoft.com';
 
-export const onRequestPost: PagesFunction<Env> = async (context) => {
+export const onRequestPost: PagesFunction<Env> = async () => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -15,7 +15,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body = new URLSearchParams({
       client_id: CLIENT_ID,
-      scope: SCOPES,
+      resource: RESOURCE,
     });
 
     const response = await fetch(DEVICE_CODE_URL, {
@@ -37,9 +37,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const data = await response.json() as {
       device_code: string;
       user_code: string;
-      verification_uri: string;
-      expires_in: number;
-      interval: number;
+      verification_url: string;
+      expires_in: string;
+      interval: string;
       message: string;
     };
 
@@ -47,9 +47,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       JSON.stringify({
         deviceCode: data.device_code,
         userCode: data.user_code,
-        verificationUri: data.verification_uri,
-        expiresIn: data.expires_in,
-        interval: data.interval,
+        verificationUri: data.verification_url,
+        expiresIn: parseInt(data.expires_in, 10),
+        interval: parseInt(data.interval, 10),
         message: data.message,
       }),
       { status: 200, headers }
