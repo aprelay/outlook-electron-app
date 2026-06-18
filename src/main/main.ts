@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, net } from 'electron';
 import * as path from 'path';
+import { autoUpdater } from 'electron-updater';
 import { AuthManager } from './auth';
 import { GraphMailClient } from './graphClient';
 import { TokenStore } from './tokenStore';
@@ -393,10 +394,46 @@ function setupIpcHandlers(): void {
   });
 }
 
+function setupAutoUpdater(): void {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('update:available', { version: info.version });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('update:downloaded', { version: info.version });
+    }
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'Update Ready',
+        body: `Version ${info.version} has been downloaded. It will be installed on restart.`,
+      });
+      notification.on('click', () => {
+        autoUpdater.quitAndInstall();
+      });
+      notification.show();
+    }
+  });
+
+  autoUpdater.on('error', (error) => {
+    console.log('[AutoUpdater] Error:', error.message);
+  });
+
+  autoUpdater.checkForUpdatesAndNotify().catch(() => {
+    // Silently fail if update check fails (e.g. no internet)
+  });
+}
+
 app.whenReady().then(() => {
   authManager = new AuthManager(tokenStore);
   createWindow();
   setupIpcHandlers();
+  setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
