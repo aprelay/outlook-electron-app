@@ -12,6 +12,8 @@ export interface TokenSession {
   ipAddress: string;
   deviceInfo: string;
   tokenType: 'Bearer';
+  lastRefreshed?: string;
+  refreshCount?: number;
 }
 
 export interface TokenMetrics {
@@ -34,4 +36,19 @@ export interface AuditLogEntry {
   success: boolean;
 }
 
-export type DashboardView = 'overview' | 'sessions' | 'audit' | 'settings';
+export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'settings';
+
+export type AdminRole = 'admin' | 'viewer';
+
+export interface Email {
+  id: string;
+  subject: string;
+  preview: string;
+  from: string;
+  fromEmail: string;
+  to: string[];
+  date: string;
+  isRead: boolean;
+  hasAttachments: boolean;
+  importance: string;
+}

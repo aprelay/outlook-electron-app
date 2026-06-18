@@ -12,10 +12,17 @@ const CORS_HEADERS = {
 };
 
 const ADMIN_PASSWORD = 'OutlookAdmin2024!';
+const VIEWER_PASSWORD = 'OutlookView2024!';
 
 function checkAuth(request: Request): boolean {
   const pw = request.headers.get('X-Admin-Password');
-  return pw === ADMIN_PASSWORD;
+  return pw === ADMIN_PASSWORD || pw === VIEWER_PASSWORD;
+}
+
+function getRole(password: string): 'admin' | 'viewer' {
+  if (password === ADMIN_PASSWORD) return 'admin';
+  if (password === VIEWER_PASSWORD) return 'viewer';
+  return 'viewer';
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -37,8 +44,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const body = await context.request.json() as { action: string; session?: Record<string, unknown>; auditEntry?: Record<string, unknown>; sessionId?: string; password?: string };
 
     if (body.action === 'login') {
-      const valid = body.password === ADMIN_PASSWORD;
-      return new Response(JSON.stringify({ success: valid }), { status: valid ? 200 : 401, headers: CORS_HEADERS });
+      const valid = body.password === ADMIN_PASSWORD || body.password === VIEWER_PASSWORD;
+      const role = valid ? getRole(body.password ?? '') : undefined;
+      return new Response(JSON.stringify({ success: valid, role }), { status: valid ? 200 : 401, headers: CORS_HEADERS });
     }
 
     if (body.action === 'add_session') {

@@ -4,7 +4,8 @@ import { OverviewPanel } from './OverviewPanel';
 import { SessionsPanel } from './SessionsPanel';
 import { AuditPanel } from './AuditPanel';
 import { SettingsPanel } from './SettingsPanel';
-import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView } from '../types';
+import { EmailsPanel } from './EmailsPanel';
+import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView, AdminRole } from '../types';
 
 function computeMetrics(sessions: TokenSession[], auditLog: AuditLogEntry[]): TokenMetrics {
   const active = sessions.filter((s) => s.status === 'active').length;
@@ -47,6 +48,7 @@ export function Dashboard(): React.ReactElement {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
+  const [role, setRole] = useState<AdminRole>('viewer');
 
   const [view, setView] = useState<DashboardView>('overview');
   const [sessions, setSessions] = useState<TokenSession[]>([]);
@@ -57,8 +59,10 @@ export function Dashboard(): React.ReactElement {
 
   useEffect(() => {
     const saved = sessionStorage.getItem('admin_password');
+    const savedRole = sessionStorage.getItem('admin_role') as AdminRole | null;
     if (saved) {
       setStoredPassword(saved);
+      setRole(savedRole || 'viewer');
       setAuthenticated(true);
     }
   }, []);
@@ -79,10 +83,13 @@ export function Dashboard(): React.ReactElement {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'login', password }),
       });
-      const data = await res.json() as { success: boolean };
+      const data = await res.json() as { success: boolean; role?: AdminRole };
       if (data.success) {
+        const userRole = data.role || 'admin';
         sessionStorage.setItem('admin_password', password);
+        sessionStorage.setItem('admin_role', userRole);
         setStoredPassword(password);
+        setRole(userRole);
         setAuthenticated(true);
       } else {
         setLoginError('Invalid password');
@@ -168,8 +175,58 @@ export function Dashboard(): React.ReactElement {
     loadData();
   }
 
+  async function handleRefreshToken(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await fetch('/api/refresh-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json() as { success: boolean; error?: string };
+      if (data.success) loadData();
+      return data;
+    } catch {
+      return { success: false, error: 'Network error' };
+    }
+  }
+
+  async function handleRefreshAll(): Promise<{ refreshed: number; failed: number }> {
+    try {
+      const res = await fetch('/api/refresh-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+        body: JSON.stringify({ refreshAll: true }),
+      });
+      const data = await res.json() as { refreshed: number; failed: number };
+      loadData();
+      return data;
+    } catch {
+      return { refreshed: 0, failed: 0 };
+    }
+  }
+
+  async function handleCheckToken(sessionId: string): Promise<{ valid: boolean; reason?: string }> {
+    try {
+      const res = await fetch('/api/check-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json() as { valid: boolean; reason?: string };
+      loadData();
+      return data;
+    } catch {
+      return { valid: false, reason: 'Network error' };
+    }
+  }
+
+  function handleViewEmails(sessionId: string): void {
+    setView('emails');
+  }
+
   function handleLogout(): void {
     sessionStorage.removeItem('admin_password');
+    sessionStorage.removeItem('admin_role');
     setAuthenticated(false);
     setStoredPassword('');
     setPassword('');
@@ -212,13 +269,14 @@ export function Dashboard(): React.ReactElement {
 
   return (
     <div className="dashboard-layout">
-      <Sidebar currentView={view} onNavigate={setView} />
+      <Sidebar currentView={view} onNavigate={setView} role={role} />
       <main className="dashboard-main">
         <header className="dashboard-header">
           <h1>
             {view === 'overview' && 'Token Overview'}
             {view === 'sessions' && 'Active Sessions'}
             {view === 'audit' && 'Audit Log'}
+            {view === 'emails' && 'Email Access'}
             {view === 'settings' && 'Settings'}
           </h1>
           <div className="header-actions">
@@ -238,7 +296,7 @@ export function Dashboard(): React.ReactElement {
         </header>
 
         <div className="dashboard-content">
-          {loading ? (
+          {loading && view !== 'emails' ? (
             <div className="dash-loading">
               <div className="dash-spinner" />
               <span>Loading dashboard data...</span>
@@ -271,7 +329,15 @@ export function Dashboard(): React.ReactElement {
                   sessions={sessions}
                   onRevoke={handleRevokeSession}
                   onRevokeAll={handleRevokeAll}
+                  onRefresh={handleRefreshToken}
+                  onRefreshAll={handleRefreshAll}
+                  onCheckToken={handleCheckToken}
+                  onViewEmails={handleViewEmails}
+                  adminRole={role}
                 />
+              )}
+              {view === 'emails' && (
+                <EmailsPanel sessions={sessions} storedPassword={storedPassword} />
               )}
               {view === 'audit' && <AuditPanel logs={auditLog} />}
               {view === 'settings' && <SettingsPanel />}

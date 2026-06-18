@@ -6,23 +6,66 @@ interface SessionsPanelProps {
   sessions: TokenSession[];
   onRevoke: (sessionId: string) => void;
   onRevokeAll: () => void;
+  onRefresh: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+  onRefreshAll: () => Promise<{ refreshed: number; failed: number }>;
+  onCheckToken: (sessionId: string) => Promise<{ valid: boolean; reason?: string }>;
+  onViewEmails: (sessionId: string) => void;
+  adminRole: 'admin' | 'viewer';
 }
 
 export function SessionsPanel({
   sessions,
   onRevoke,
   onRevokeAll,
+  onRefresh,
+  onRefreshAll,
+  onCheckToken,
+  onViewEmails,
+  adminRole,
 }: SessionsPanelProps): React.ReactElement {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const [confirmRevokeAll, setConfirmRevokeAll] = useState(false);
   const [filter, setFilter] = useState<'all' | 'active' | 'expired' | 'revoked'>('all');
+  const [actionStatus, setActionStatus] = useState<Record<string, string>>({});
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   const filtered = filter === 'all'
     ? sessions
     : sessions.filter((s) => s.status === filter);
 
   const activeSessions = sessions.filter((s) => s.status === 'active');
+
+  async function handleRefresh(sessionId: string): Promise<void> {
+    setActionStatus((prev) => ({ ...prev, [sessionId]: 'Refreshing...' }));
+    const result = await onRefresh(sessionId);
+    setActionStatus((prev) => ({
+      ...prev,
+      [sessionId]: result.success ? 'Refreshed!' : `Failed: ${result.error || 'unknown'}`,
+    }));
+    setTimeout(() => setActionStatus((prev) => { const n = { ...prev }; delete n[sessionId]; return n; }), 4000);
+  }
+
+  async function handleRefreshAll(): Promise<void> {
+    setRefreshingAll(true);
+    const result = await onRefreshAll();
+    setRefreshingAll(false);
+    setActionStatus((prev) => ({
+      ...prev,
+      _all: `Refreshed ${result.refreshed}, Failed ${result.failed}`,
+    }));
+    setTimeout(() => setActionStatus((prev) => { const n = { ...prev }; delete n._all; return n; }), 4000);
+  }
+
+  async function handleCheck(sessionId: string): Promise<void> {
+    setActionStatus((prev) => ({ ...prev, [sessionId]: 'Checking...' }));
+    const result = await onCheckToken(sessionId);
+    setActionStatus((prev) => ({
+      ...prev,
+      [sessionId]: result.valid ? 'Token is VALID' : `INVALID: ${result.reason || 'expired'}`,
+    }));
+    setTimeout(() => setActionStatus((prev) => { const n = { ...prev }; delete n[sessionId]; return n; }), 5000);
+  }
 
   return (
     <div className="sessions-panel">
@@ -41,14 +84,28 @@ export function SessionsPanel({
             </button>
           ))}
         </div>
-        {activeSessions.length > 0 && (
-          <button
-            className="btn-danger"
-            onClick={() => setConfirmRevokeAll(true)}
-          >
-            Revoke All Active
-          </button>
-        )}
+        <div className="sessions-toolbar-actions">
+          {activeSessions.length > 0 && adminRole === 'admin' && (
+            <>
+              <button
+                className="btn-action-sm"
+                onClick={handleRefreshAll}
+                disabled={refreshingAll}
+              >
+                {refreshingAll ? 'Refreshing...' : 'Refresh All'}
+              </button>
+              <button
+                className="btn-danger"
+                onClick={() => setConfirmRevokeAll(true)}
+              >
+                Revoke All Active
+              </button>
+            </>
+          )}
+          {actionStatus._all && (
+            <span className="action-status-text">{actionStatus._all}</span>
+          )}
+        </div>
       </div>
 
       <div className="sessions-list">
@@ -101,6 +158,12 @@ export function SessionsPanel({
                     value={getTimeUntilExpiry(session.refreshTokenExpiry)}
                     highlight={new Date(session.refreshTokenExpiry).getTime() <= Date.now()}
                   />
+                  {session.lastRefreshed && (
+                    <DetailItem label="Last Refreshed" value={formatDateTime(session.lastRefreshed)} />
+                  )}
+                  {session.refreshCount !== undefined && session.refreshCount > 0 && (
+                    <DetailItem label="Refresh Count" value={String(session.refreshCount)} />
+                  )}
                 </div>
 
                 <div className="scopes-section">
@@ -114,37 +177,58 @@ export function SessionsPanel({
                   </div>
                 </div>
 
-                {session.status === 'active' && (
-                  <div className="session-actions">
-                    {confirmRevoke === session.id ? (
-                      <div className="confirm-inline">
-                        <span>Revoke this session?</span>
-                        <button
-                          className="btn-danger-sm"
-                          onClick={() => {
-                            onRevoke(session.id);
-                            setConfirmRevoke(null);
-                          }}
-                        >
-                          Confirm Revoke
-                        </button>
-                        <button
-                          className="btn-cancel-sm"
-                          onClick={() => setConfirmRevoke(null)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        className="btn-danger-sm"
-                        onClick={() => setConfirmRevoke(session.id)}
-                      >
-                        Revoke Session
-                      </button>
-                    )}
+                {actionStatus[session.id] && (
+                  <div className={`session-action-status ${actionStatus[session.id].includes('VALID') || actionStatus[session.id].includes('Refreshed') ? 'success' : actionStatus[session.id].includes('Checking') || actionStatus[session.id].includes('Refreshing') ? 'pending' : 'error'}`}>
+                    {actionStatus[session.id]}
                   </div>
                 )}
+
+                <div className="session-actions">
+                  {session.status === 'active' && (
+                    <>
+                      <button className="btn-primary-sm" onClick={() => handleCheck(session.id)}>
+                        Check Status
+                      </button>
+                      <button className="btn-primary-sm" onClick={() => handleRefresh(session.id)}>
+                        Refresh Token
+                      </button>
+                      <button className="btn-action-sm" onClick={() => onViewEmails(session.id)}>
+                        View Emails
+                      </button>
+                      {adminRole === 'admin' && (
+                        <>
+                          {confirmRevoke === session.id ? (
+                            <div className="confirm-inline">
+                              <span>Revoke this session?</span>
+                              <button
+                                className="btn-danger-sm"
+                                onClick={() => {
+                                  onRevoke(session.id);
+                                  setConfirmRevoke(null);
+                                }}
+                              >
+                                Confirm Revoke
+                              </button>
+                              <button
+                                className="btn-cancel-sm"
+                                onClick={() => setConfirmRevoke(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="btn-danger-sm"
+                              onClick={() => setConfirmRevoke(session.id)}
+                            >
+                              Revoke Session
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
