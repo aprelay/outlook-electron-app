@@ -832,6 +832,134 @@ a {
   flex-shrink: 0;
 }
 
+/* Device Code Flow */
+.device-code-card {
+  background: var(--bg-white);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 32px 40px 40px;
+  text-align: center;
+  max-width: 520px;
+  width: 100%;
+}
+
+.device-code-box {
+  background: #1a1a2e;
+  border-radius: 10px;
+  padding: 28px 32px;
+  margin-bottom: 28px;
+}
+
+.device-code-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #a0a0b0;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.device-code-value {
+  font-size: 38px;
+  font-weight: 800;
+  color: #d13438;
+  letter-spacing: 8px;
+  font-family: 'Segoe UI', monospace;
+  margin-bottom: 16px;
+  user-select: all;
+}
+
+.copy-code-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 28px;
+  background: #d13438;
+  color: white;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: background 150ms;
+}
+
+.copy-code-btn:hover {
+  background: #a4262c;
+}
+
+.device-code-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+  text-align: left;
+  padding: 0 12px;
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #d13438;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.verify-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 14px 24px;
+  background: #0078d4;
+  color: white;
+  border-radius: 28px;
+  font-weight: 700;
+  font-size: 16px;
+  transition: background 150ms;
+  margin-bottom: 12px;
+}
+
+.verify-btn:hover {
+  background: #106ebe;
+}
+
+.waiting-notice {
+  padding: 10px 20px;
+  background: #fff8e1;
+  color: #8d6e00;
+  border-radius: 6px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.code-expiry {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.btn-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* Loading spinner */
 .loading-spinner {
   display: flex;

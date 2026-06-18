@@ -3,11 +3,10 @@ import {
   Configuration,
   AuthenticationResult,
   LogLevel,
+  DeviceCodeRequest,
 } from '@azure/msal-node';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, ipcMain, shell } from 'electron';
 import { TokenStore } from './tokenStore';
-
-const REDIRECT_URI = 'http://localhost:3847';
 
 const MSAL_CONFIG: Configuration = {
   auth: {
@@ -38,6 +37,13 @@ const SCOPES = [
   'MailboxSettings.Read',
 ];
 
+export interface DeviceCodeInfo {
+  userCode: string;
+  verificationUri: string;
+  message: string;
+  expiresIn: number;
+}
+
 export class AuthManager {
   private pca: PublicClientApplication;
   private tokenStore: TokenStore;
@@ -49,84 +55,45 @@ export class AuthManager {
     this.accountId = this.tokenStore.getAccountId();
   }
 
-  async login(parentWindow: BrowserWindow): Promise<AuthenticationResult | null> {
-    const authWindow = new BrowserWindow({
-      width: 500,
-      height: 700,
-      parent: parentWindow,
-      modal: true,
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
+  async loginWithDeviceCode(mainWindow: BrowserWindow): Promise<AuthenticationResult | null> {
+    return new Promise((resolve, reject) => {
+      const deviceCodeRequest: DeviceCodeRequest = {
+        scopes: SCOPES,
+        deviceCodeCallback: (response) => {
+          const deviceCodeInfo: DeviceCodeInfo = {
+            userCode: response.userCode,
+            verificationUri: response.verificationUri,
+            message: response.message,
+            expiresIn: response.expiresIn ?? 900,
+          };
+
+          mainWindow.webContents.send('auth:deviceCode', deviceCodeInfo);
+        },
+      };
+
+      this.pca
+        .acquireTokenByDeviceCode(deviceCodeRequest)
+        .then((tokenResponse) => {
+          if (tokenResponse?.account) {
+            this.accountId = tokenResponse.account.homeAccountId;
+            this.tokenStore.saveAccountId(this.accountId);
+            this.tokenStore.saveTokenCache(this.pca.getTokenCache().serialize());
+          }
+          mainWindow.webContents.send('auth:deviceCodeComplete', { success: true });
+          resolve(tokenResponse);
+        })
+        .catch((error) => {
+          mainWindow.webContents.send('auth:deviceCodeComplete', {
+            success: false,
+            error: error instanceof Error ? error.message : 'Authentication failed',
+          });
+          reject(error);
+        });
     });
+  }
 
-    try {
-      const authCodeUrl = await this.pca.getAuthCodeUrl({
-        scopes: SCOPES,
-        redirectUri: REDIRECT_URI,
-        prompt: 'select_account',
-      });
-
-      authWindow.loadURL(authCodeUrl);
-      authWindow.show();
-
-      const authCode = await new Promise<string>((resolve, reject) => {
-        authWindow.webContents.on('will-redirect', (_event, url) => {
-          const urlObj = new URL(url);
-          const code = urlObj.searchParams.get('code');
-          const error = urlObj.searchParams.get('error');
-
-          if (code) {
-            resolve(code);
-          } else if (error) {
-            reject(new Error(`Auth error: ${error} - ${urlObj.searchParams.get('error_description')}`));
-          }
-        });
-
-        authWindow.webContents.on('will-navigate', (_event, url) => {
-          try {
-            const urlObj = new URL(url);
-            const code = urlObj.searchParams.get('code');
-            const error = urlObj.searchParams.get('error');
-
-            if (code) {
-              resolve(code);
-            } else if (error) {
-              reject(new Error(`Auth error: ${error}`));
-            }
-          } catch {
-            // not a valid URL, ignore
-          }
-        });
-
-        authWindow.on('closed', () => {
-          reject(new Error('Auth window was closed'));
-        });
-      });
-
-      authWindow.close();
-
-      const tokenResponse = await this.pca.acquireTokenByCode({
-        code: authCode,
-        scopes: SCOPES,
-        redirectUri: REDIRECT_URI,
-      });
-
-      if (tokenResponse?.account) {
-        this.accountId = tokenResponse.account.homeAccountId;
-        this.tokenStore.saveAccountId(this.accountId);
-        this.tokenStore.saveTokenCache(this.pca.getTokenCache().serialize());
-      }
-
-      return tokenResponse;
-    } catch (error) {
-      if (!authWindow.isDestroyed()) {
-        authWindow.close();
-      }
-      throw error;
-    }
+  openVerificationPage(url: string): void {
+    shell.openExternal(url);
   }
 
   async acquireTokenSilent(): Promise<string | null> {

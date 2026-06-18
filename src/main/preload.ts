@@ -5,6 +5,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     login: () => ipcRenderer.invoke('auth:login'),
     logout: () => ipcRenderer.invoke('auth:logout'),
     check: () => ipcRenderer.invoke('auth:check'),
+    openVerification: (url: string) => ipcRenderer.invoke('auth:openVerification', url),
+    onDeviceCode: (callback: (data: {
+      userCode: string;
+      verificationUri: string;
+      message: string;
+      expiresIn: number;
+    }) => void) => {
+      ipcRenderer.on('auth:deviceCode', (_event, data) => callback(data));
+    },
+    onDeviceCodeComplete: (callback: (data: { success: boolean; error?: string }) => void) => {
+      ipcRenderer.on('auth:deviceCodeComplete', (_event, data) => callback(data));
+    },
+    removeDeviceCodeListeners: () => {
+      ipcRenderer.removeAllListeners('auth:deviceCode');
+      ipcRenderer.removeAllListeners('auth:deviceCodeComplete');
+    },
   },
   mail: {
     getFolders: () => ipcRenderer.invoke('mail:getFolders'),

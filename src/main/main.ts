@@ -38,7 +38,7 @@ function createWindow(): void {
 function setupIpcHandlers(): void {
   ipcMain.handle('auth:login', async () => {
     try {
-      const result = await authManager.login(mainWindow!);
+      const result = await authManager.loginWithDeviceCode(mainWindow!);
       if (result) {
         graphClient = new GraphMailClient(authManager);
         const profile = await graphClient.getProfile();
@@ -49,6 +49,10 @@ function setupIpcHandlers(): void {
       const message = error instanceof Error ? error.message : 'Login failed';
       return { success: false, error: message };
     }
+  });
+
+  ipcMain.handle('auth:openVerification', async (_event, url: string) => {
+    authManager.openVerificationPage(url);
   });
 
   ipcMain.handle('auth:logout', async () => {

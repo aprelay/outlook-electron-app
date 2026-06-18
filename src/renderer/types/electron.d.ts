@@ -62,11 +62,22 @@ export interface SendMessageData {
   replyToId?: string;
 }
 
+export interface DeviceCodeInfo {
+  userCode: string;
+  verificationUri: string;
+  message: string;
+  expiresIn: number;
+}
+
 export interface ElectronAPI {
   auth: {
     login: () => Promise<AuthResult>;
     logout: () => Promise<{ success: boolean; error?: string }>;
     check: () => Promise<AuthCheckResult>;
+    openVerification: (url: string) => Promise<void>;
+    onDeviceCode: (callback: (data: DeviceCodeInfo) => void) => void;
+    onDeviceCodeComplete: (callback: (data: { success: boolean; error?: string }) => void) => void;
+    removeDeviceCodeListeners: () => void;
   };
   mail: {
     getFolders: () => Promise<MailResult>;
