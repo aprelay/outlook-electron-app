@@ -27,12 +27,13 @@ const ADMIN_PASSWORD = 'OutlookAdmin2024!';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
-    const pw = context.request.headers.get('X-Admin-Password');
+    const body = await context.request.json() as { sessionId?: string; password?: string };
+
+    // Accept password from header or body
+    const pw = context.request.headers.get('X-Admin-Password') || body.password || '';
     if (pw !== ADMIN_PASSWORD) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
     }
-
-    const body = await context.request.json() as { sessionId?: string };
 
     const sessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as StoredSession[] | null) ?? [];
     const activeSessions = sessions.filter((s) => s.status === 'active');

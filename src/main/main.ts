@@ -281,7 +281,7 @@ function setupIpcHandlers(): void {
           'Content-Type': 'application/json',
           'X-Admin-Password': password,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ password }),
       });
 
       if (!response.ok) {
@@ -304,7 +304,7 @@ function setupIpcHandlers(): void {
             'Content-Type': 'application/json',
             'X-Admin-Password': password,
           },
-          body: JSON.stringify({ sessionId: sess.id }),
+          body: JSON.stringify({ sessionId: sess.id, password }),
         });
 
         if (importResp.ok) {
