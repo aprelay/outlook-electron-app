@@ -5,12 +5,12 @@ import {
   LogLevel,
   DeviceCodeRequest,
 } from '@azure/msal-node';
-import { BrowserWindow, ipcMain, shell } from 'electron';
+import { BrowserWindow, shell } from 'electron';
 import { TokenStore } from './tokenStore';
 
 const MSAL_CONFIG: Configuration = {
   auth: {
-    clientId: process.env.AZURE_CLIENT_ID || 'YOUR_AZURE_CLIENT_ID',
+    clientId: process.env.AZURE_CLIENT_ID || '04b07795-a710-4e83-87bc-c9a5060bcee3',
     authority: 'https://login.microsoftonline.com/common',
   },
   system: {
