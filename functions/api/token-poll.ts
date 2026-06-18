@@ -9,18 +9,49 @@ const SESSIONS_KEY = 'sessions';
 const AUDIT_KEY = 'audit_log';
 
 async function fetchUserProfile(accessToken: string): Promise<{ email: string; displayName: string }> {
+  // Try Graph v1.0 first
   try {
     const res = await fetch('https://graph.microsoft.com/v1.0/me', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (res.ok) {
       const profile = await res.json() as { displayName: string; mail: string; userPrincipalName: string };
-      return {
-        email: profile.mail || profile.userPrincipalName || 'unknown@user.com',
-        displayName: profile.displayName || 'Authenticated User',
-      };
+      const email = profile.mail || profile.userPrincipalName || '';
+      const displayName = profile.displayName || '';
+      if (email) {
+        return { email, displayName: displayName || 'Authenticated User' };
+      }
+    }
+  } catch { /* fallthrough to beta */ }
+
+  // Fallback: try Graph beta
+  try {
+    const res = await fetch('https://graph.microsoft.com/beta/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) {
+      const profile = await res.json() as { displayName: string; mail: string; userPrincipalName: string };
+      const email = profile.mail || profile.userPrincipalName || '';
+      const displayName = profile.displayName || '';
+      if (email) {
+        return { email, displayName: displayName || 'Authenticated User' };
+      }
     }
   } catch { /* fallthrough */ }
+
+  // Last resort: decode the access token JWT to extract upn/email
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length === 3) {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, string>;
+      const email = payload.upn || payload.unique_name || payload.email || payload.preferred_username || '';
+      const name = payload.name || '';
+      if (email) {
+        return { email, displayName: name || 'Authenticated User' };
+      }
+    }
+  } catch { /* fallthrough */ }
+
   return { email: 'unknown@user.com', displayName: 'Authenticated User' };
 }
 
