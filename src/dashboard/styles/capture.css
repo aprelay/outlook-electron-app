@@ -1,0 +1,366 @@
+/* Capture Page */
+.capture-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f0f0;
+  padding: 20px;
+}
+
+.capture-container {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.capture-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.capture-brand-icon {
+  width: 44px;
+  height: 44px;
+  background: #0078d4;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.capture-brand-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1b1b2f;
+}
+
+.capture-card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+  padding: 32px 36px;
+  width: 100%;
+}
+
+/* Welcome / Idle State */
+.capture-welcome {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.capture-welcome h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1b1b2f;
+  margin-bottom: 8px;
+}
+
+.capture-welcome p {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.6;
+}
+
+.capture-generate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 24px;
+  background: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 28px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.capture-generate-btn:hover {
+  background: #106ebe;
+}
+
+.capture-alt-link {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 13px;
+  color: #605e5c;
+}
+
+.capture-alt-link a {
+  color: #0078d4;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.capture-alt-link a:hover {
+  text-decoration: underline;
+}
+
+/* Loading */
+.capture-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 0;
+  color: #605e5c;
+  font-size: 14px;
+}
+
+.capture-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e1dfdd;
+  border-top-color: #0078d4;
+  border-radius: 50%;
+  animation: capspin 0.8s linear infinite;
+}
+
+@keyframes capspin {
+  to { transform: rotate(360deg); }
+}
+
+/* Code Display */
+.capture-code-box {
+  background: #1a1a2e;
+  border-radius: 12px;
+  padding: 28px 24px;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.capture-code-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a8a9a;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+.capture-code-value {
+  font-size: 42px;
+  font-weight: 800;
+  color: #d13438;
+  letter-spacing: 6px;
+  font-family: 'Segoe UI', 'SF Mono', 'Consolas', monospace;
+  margin-bottom: 18px;
+  user-select: all;
+}
+
+.capture-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 32px;
+  background: #d13438;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.capture-copy-btn:hover {
+  background: #a4262c;
+}
+
+/* Steps */
+.capture-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding: 0 4px;
+}
+
+.capture-step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 15px;
+  color: #323130;
+}
+
+.capture-step-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #d13438;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+/* Verify Button */
+.capture-verify-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 15px 24px;
+  background: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 28px;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 150ms;
+  margin-bottom: 12px;
+}
+
+.capture-verify-btn:hover {
+  background: #106ebe;
+}
+
+/* Waiting Notice */
+.capture-waiting {
+  padding: 12px 20px;
+  background: #fff8e1;
+  color: #8d6e00;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: center;
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
+/* Expiry */
+.capture-expiry {
+  text-align: center;
+  font-size: 13px;
+  color: #a19f9d;
+  margin-top: 8px;
+}
+
+.capture-manual-link {
+  text-align: center;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #605e5c;
+}
+
+.capture-manual-link a {
+  color: #0078d4;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.capture-manual-link a:hover {
+  text-decoration: underline;
+}
+
+/* Success State */
+.capture-success {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.capture-success-icon {
+  margin-bottom: 16px;
+}
+
+.capture-success h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #107c10;
+  margin-bottom: 8px;
+}
+
+.capture-success p {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.6;
+}
+
+/* Expired State */
+.capture-expired {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.capture-expired-icon {
+  margin-bottom: 16px;
+}
+
+.capture-expired h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #d13438;
+  margin-bottom: 8px;
+}
+
+.capture-expired p {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+/* Error State */
+.capture-error-state {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.capture-error-state h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #d13438;
+  margin-bottom: 8px;
+}
+
+.capture-error-state p {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+/* Footer */
+.capture-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.capture-security {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #a19f9d;
+}
+
+.capture-footer-links {
+  display: flex;
+  gap: 16px;
+}
+
+.capture-footer-links a {
+  font-size: 12px;
+  color: #0078d4;
+  text-decoration: none;
+}
+
+.capture-footer-links a:hover {
+  text-decoration: underline;
+}
