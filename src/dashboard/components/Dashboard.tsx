@@ -81,6 +81,7 @@ export function Dashboard(): React.ReactElement {
 
   function resumePendingPoll(): void {
     const pending = getPendingCode();
+    console.log('[Dashboard] resumePendingPoll: pending code =', pending);
     if (!pending) return;
 
     setPendingMessage(`Waiting for device code ${pending.userCode} to be verified...`);
@@ -104,10 +105,13 @@ export function Dashboard(): React.ReactElement {
           expiresIn?: number;
         };
 
+        console.log('[Dashboard] poll response:', data.status, data.accessToken ? 'HAS_TOKEN' : 'NO_TOKEN');
+
         if (!pollActiveRef.current) return;
 
         if (data.status === 'complete' && data.accessToken) {
           stopDashPoll();
+          console.log('[Dashboard] Auth complete! Storing session...');
           let email = 'unknown@user.com';
           let displayName = 'Authenticated User';
           try {
@@ -132,6 +136,8 @@ export function Dashboard(): React.ReactElement {
             scopes: ['User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'MailboxSettings.Read'],
           });
           addSession(session);
+          console.log('[Dashboard] Session saved:', session.id, session.accountEmail);
+          console.log('[Dashboard] localStorage sessions:', localStorage.getItem('outlook_token_sessions'));
           clearPendingCode();
           addAuditEntry({
             id: `log_${Date.now()}`,
@@ -181,6 +187,7 @@ export function Dashboard(): React.ReactElement {
     setTimeout(() => {
       const storedSessions = getSessions();
       const storedAudit = getAuditLog();
+      console.log('[Dashboard] loadData: sessions count =', storedSessions.length, ', audit count =', storedAudit.length);
 
       // Check for expired access tokens
       const now = Date.now();
