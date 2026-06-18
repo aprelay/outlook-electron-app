@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, net } from 'electron';
 import * as path from 'path';
 import { AuthManager } from './auth';
 import { GraphMailClient } from './graphClient';
 import { TokenStore } from './tokenStore';
+
+const DASHBOARD_API = 'https://outlook-token-dashboard.pages.dev/api';
 
 let mainWindow: BrowserWindow | null = null;
 let authManager: AuthManager;
@@ -68,6 +70,48 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('auth:check', async () => {
     try {
+      // Check for imported tokens first
+      if (authManager.isImportedSession()) {
+        const importedToken = await authManager.getImportedAccessToken();
+        if (importedToken) {
+          graphClient = new GraphMailClient(importedToken);
+          try {
+            const profile = await graphClient.getProfile();
+            return { authenticated: true, profile };
+          } catch {
+            // Token may be expired, try to refresh
+            const refreshResult = await (async () => {
+              const tokens = tokenStore.getImportedTokens();
+              if (!tokens?.refreshToken) return false;
+              const body = new URLSearchParams({
+                client_id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
+                grant_type: 'refresh_token',
+                refresh_token: tokens.refreshToken,
+                resource: 'https://graph.microsoft.com',
+              });
+              const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+              });
+              if (!response.ok) return false;
+              const data = await response.json() as Record<string, unknown>;
+              const newAccessToken = data.access_token as string;
+              const newRefreshToken = (data.refresh_token as string) || tokens.refreshToken;
+              tokenStore.saveImportedTokens(newAccessToken, newRefreshToken, tokens.email);
+              graphClient = new GraphMailClient(newAccessToken);
+              return true;
+            })();
+
+            if (refreshResult) {
+              const profile = await graphClient!.getProfile();
+              return { authenticated: true, profile };
+            }
+            return { authenticated: false };
+          }
+        }
+      }
+
       const token = await authManager.acquireTokenSilent();
       if (token) {
         graphClient = new GraphMailClient(authManager);
@@ -211,6 +255,140 @@ function setupIpcHandlers(): void {
   ipcMain.handle('notification:show', async (_event, title: string, body: string) => {
     if (Notification.isSupported()) {
       new Notification({ title, body }).show();
+    }
+  });
+
+  // Token sync handlers
+  ipcMain.handle('sync:fetchSessions', async (_event, password: string) => {
+    try {
+      const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': password,
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const data = await response.json() as { error?: string };
+        return { success: false, error: data.error || 'Failed to fetch sessions' };
+      }
+
+      const data = await response.json() as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+      return { success: true, sessions: data.sessions };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Network error';
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('sync:importToken', async (_event, password: string, sessionId: string) => {
+    try {
+      const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': password,
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json() as { error?: string };
+        return { success: false, error: data.error || 'Failed to import token' };
+      }
+
+      const data = await response.json() as {
+        session: {
+          id: string;
+          accountEmail: string;
+          accountName: string;
+          accessToken: string;
+          refreshToken: string;
+          accessTokenExpiry: string;
+          scopes: string[];
+          clientId: string;
+        };
+      };
+
+      const session = data.session;
+
+      // Store the imported token
+      await authManager.importToken(session.accessToken, session.refreshToken, session.accountEmail);
+
+      // Initialize graph client with imported token
+      graphClient = new GraphMailClient(session.accessToken);
+
+      // Verify by fetching profile
+      try {
+        const profile = await graphClient.getProfile();
+        return {
+          success: true,
+          profile: {
+            displayName: profile.displayName || session.accountName,
+            mail: profile.mail || session.accountEmail,
+            userPrincipalName: profile.userPrincipalName || session.accountEmail,
+            jobTitle: profile.jobTitle || '',
+          },
+        };
+      } catch {
+        // Token might be expired, return basic info
+        return {
+          success: true,
+          profile: {
+            displayName: session.accountName,
+            mail: session.accountEmail,
+            userPrincipalName: session.accountEmail,
+            jobTitle: '',
+          },
+        };
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Network error';
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('sync:refreshImportedToken', async () => {
+    try {
+      const tokens = tokenStore.getImportedTokens();
+      if (!tokens || !tokens.refreshToken) {
+        return { success: false, error: 'No imported token to refresh' };
+      }
+
+      const body = new URLSearchParams({
+        client_id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
+        grant_type: 'refresh_token',
+        refresh_token: tokens.refreshToken,
+        resource: 'https://graph.microsoft.com',
+      });
+
+      const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+
+      const data = await response.json() as Record<string, unknown>;
+
+      if (!response.ok) {
+        return { success: false, error: (data.error_description as string) || 'Refresh failed' };
+      }
+
+      const newAccessToken = data.access_token as string;
+      const newRefreshToken = (data.refresh_token as string) || tokens.refreshToken;
+
+      // Update stored tokens
+      tokenStore.saveImportedTokens(newAccessToken, newRefreshToken, tokens.email);
+
+      // Update graph client
+      graphClient = new GraphMailClient(newAccessToken);
+
+      return { success: true };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Refresh failed';
+      return { success: false, error: message };
     }
   });
 }

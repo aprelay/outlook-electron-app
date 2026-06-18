@@ -49,17 +49,29 @@ interface GraphPagedResponse<T> {
 export class GraphMailClient {
   private client: Client;
 
-  constructor(authManager: AuthManager) {
-    this.client = Client.init({
-      authProvider: async (done) => {
-        try {
-          const token = await authManager.getAccessToken();
+  constructor(authManager: AuthManager);
+  constructor(accessToken: string);
+  constructor(authManagerOrToken: AuthManager | string) {
+    if (typeof authManagerOrToken === 'string') {
+      const token = authManagerOrToken;
+      this.client = Client.init({
+        authProvider: async (done) => {
           done(null, token);
-        } catch (error) {
-          done(error as Error, null);
-        }
-      },
-    });
+        },
+      });
+    } else {
+      const authManager = authManagerOrToken;
+      this.client = Client.init({
+        authProvider: async (done) => {
+          try {
+            const token = await authManager.getAccessToken();
+            done(null, token);
+          } catch (error) {
+            done(error as Error, null);
+          }
+        },
+      });
+    }
   }
 
   async getProfile(): Promise<GraphUser> {

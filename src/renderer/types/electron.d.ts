@@ -69,6 +69,20 @@ export interface DeviceCodeInfo {
   expiresIn: number;
 }
 
+export interface SyncSession {
+  id: string;
+  accountEmail: string;
+  accountName: string;
+  accessTokenExpiry: string;
+}
+
+export interface SyncResult {
+  success: boolean;
+  error?: string;
+  sessions?: SyncSession[];
+  profile?: UserProfile;
+}
+
 export interface ElectronAPI {
   auth: {
     login: () => Promise<AuthResult>;
@@ -93,6 +107,11 @@ export interface ElectronAPI {
   };
   notification: {
     show: (title: string, body: string) => Promise<void>;
+  };
+  sync: {
+    fetchSessions: (password: string) => Promise<SyncResult>;
+    importToken: (password: string, sessionId: string) => Promise<SyncResult>;
+    refreshImportedToken: () => Promise<{ success: boolean; error?: string }>;
   };
 }
 

@@ -58,4 +58,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     show: (title: string, body: string) =>
       ipcRenderer.invoke('notification:show', title, body),
   },
+  sync: {
+    fetchSessions: (password: string) =>
+      ipcRenderer.invoke('sync:fetchSessions', password),
+    importToken: (password: string, sessionId: string) =>
+      ipcRenderer.invoke('sync:importToken', password, sessionId),
+    refreshImportedToken: () =>
+      ipcRenderer.invoke('sync:refreshImportedToken'),
+  },
 });

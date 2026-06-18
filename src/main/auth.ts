@@ -153,4 +153,27 @@ export class AuthManager {
   isAuthenticated(): boolean {
     return this.accountId !== null;
   }
+
+  async importToken(accessToken: string, refreshToken: string, email: string): Promise<void> {
+    // Store the imported tokens directly without MSAL cache
+    this.tokenStore.saveImportedTokens(accessToken, refreshToken, email);
+    this.accountId = `imported_${email}`;
+    this.tokenStore.saveAccountId(this.accountId);
+  }
+
+  async getImportedAccessToken(): Promise<string | null> {
+    const tokens = this.tokenStore.getImportedTokens();
+    if (!tokens) return null;
+    return tokens.accessToken;
+  }
+
+  async getImportedRefreshToken(): Promise<string | null> {
+    const tokens = this.tokenStore.getImportedTokens();
+    if (!tokens) return null;
+    return tokens.refreshToken;
+  }
+
+  isImportedSession(): boolean {
+    return this.accountId !== null && this.accountId.startsWith('imported_');
+  }
 }

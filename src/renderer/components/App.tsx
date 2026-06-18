@@ -63,6 +63,13 @@ export function App(): React.ReactElement {
     }
   }
 
+  function handleSyncComplete(syncProfile: UserProfile): void {
+    setAuthenticated(true);
+    setProfile(syncProfile);
+    addToast('success', `Synced as ${syncProfile.displayName || syncProfile.mail}`);
+    loadFolders();
+  }
+
   async function handleLogout(): Promise<void> {
     try {
       await window.electronAPI.auth.logout();
@@ -235,7 +242,7 @@ export function App(): React.ReactElement {
   if (!authenticated) {
     return (
       <>
-        <LoginScreen onLogin={handleLogin} />
+        <LoginScreen onLogin={handleLogin} onSyncComplete={handleSyncComplete} />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     );

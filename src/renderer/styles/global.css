@@ -832,6 +832,177 @@ a {
   flex-shrink: 0;
 }
 
+/* Login Divider */
+.login-divider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+  color: var(--text-disabled);
+  font-size: 13px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.login-divider span {
+  padding: 0 12px;
+}
+
+/* Sync Token Button */
+.sync-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 24px;
+  background: transparent;
+  color: var(--primary);
+  border: 2px solid var(--primary);
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.sync-btn:hover {
+  background: var(--primary-light);
+}
+
+.sync-btn svg {
+  font-size: 18px;
+}
+
+/* Sync Card */
+.sync-card {
+  position: relative;
+}
+
+.back-btn {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+}
+
+.back-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sync-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.sync-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.sync-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.15);
+}
+
+.sync-url-info {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+.sync-url-info code {
+  background: var(--bg-main);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.sync-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.sync-session-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 14px 16px;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  width: 100%;
+  text-align: left;
+}
+
+.sync-session-item:hover {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.sync-session-email {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.sync-session-name {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.sync-session-expiry {
+  font-size: 12px;
+  color: var(--text-disabled);
+  margin-top: 4px;
+}
+
+.sync-importing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 0;
+}
+
+.sync-importing .btn-spinner {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+  border-color: rgba(0, 120, 212, 0.2);
+  border-top-color: var(--primary);
+}
+
 /* Device Code Flow */
 .device-code-card {
   background: var(--bg-white);

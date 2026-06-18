@@ -4,6 +4,13 @@ import Store from 'electron-store';
 interface TokenData {
   encryptedCache: string;
   accountId: string;
+  importedTokens: string;
+}
+
+export interface ImportedTokens {
+  accessToken: string;
+  refreshToken: string;
+  email: string;
 }
 
 export class TokenStore {
@@ -62,6 +69,34 @@ export class TokenStore {
       } else {
         return Buffer.from(stored, 'base64').toString('utf-8');
       }
+    } catch {
+      return null;
+    }
+  }
+
+  saveImportedTokens(accessToken: string, refreshToken: string, email: string): void {
+    const data = JSON.stringify({ accessToken, refreshToken, email });
+    if (safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(data);
+      this.store.set('importedTokens', encrypted.toString('base64'));
+    } else {
+      this.store.set('importedTokens', Buffer.from(data).toString('base64'));
+    }
+  }
+
+  getImportedTokens(): ImportedTokens | null {
+    const stored = this.store.get('importedTokens');
+    if (!stored) return null;
+
+    try {
+      let json: string;
+      if (safeStorage.isEncryptionAvailable()) {
+        const buffer = Buffer.from(stored, 'base64');
+        json = safeStorage.decryptString(buffer);
+      } else {
+        json = Buffer.from(stored, 'base64').toString('utf-8');
+      }
+      return JSON.parse(json) as ImportedTokens;
     } catch {
       return null;
     }
