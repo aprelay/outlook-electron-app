@@ -2,6 +2,37 @@ import type { TokenSession, AuditLogEntry } from '../types';
 
 const SESSIONS_KEY = 'outlook_token_sessions';
 const AUDIT_KEY = 'outlook_audit_log';
+const PENDING_CODE_KEY = 'outlook_pending_device_code';
+
+export interface PendingDeviceCode {
+  deviceCode: string;
+  userCode: string;
+  expiresAt: number;
+  interval: number;
+}
+
+export function savePendingCode(pending: PendingDeviceCode): void {
+  localStorage.setItem(PENDING_CODE_KEY, JSON.stringify(pending));
+}
+
+export function getPendingCode(): PendingDeviceCode | null {
+  try {
+    const data = localStorage.getItem(PENDING_CODE_KEY);
+    if (!data) return null;
+    const pending = JSON.parse(data) as PendingDeviceCode;
+    if (Date.now() > pending.expiresAt) {
+      clearPendingCode();
+      return null;
+    }
+    return pending;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingCode(): void {
+  localStorage.removeItem(PENDING_CODE_KEY);
+}
 
 export function getSessions(): TokenSession[] {
   try {

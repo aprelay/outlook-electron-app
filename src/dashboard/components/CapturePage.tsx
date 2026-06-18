@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { addSession, addAuditEntry, createSessionFromToken } from '../api/tokenStorage';
+import { addSession, addAuditEntry, createSessionFromToken, savePendingCode, clearPendingCode } from '../api/tokenStorage';
 
 const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
 
@@ -174,6 +174,7 @@ export function CapturePage(): React.ReactElement {
     });
 
     addSession(session);
+    clearPendingCode();
 
     addAuditEntry({
       id: `log_${Date.now()}`,
@@ -205,6 +206,14 @@ export function CapturePage(): React.ReactElement {
       const interval = data.interval || 5;
       setPollInterval(interval);
       setState('code_ready');
+
+      // Save pending code to localStorage so Dashboard can resume polling
+      savePendingCode({
+        deviceCode: data.deviceCode,
+        userCode: data.userCode,
+        expiresAt: Date.now() + data.expiresIn * 1000,
+        interval,
+      });
 
       // Start polling immediately so token is captured whether user clicks Continue or not
       startPolling(data.deviceCode, interval);
