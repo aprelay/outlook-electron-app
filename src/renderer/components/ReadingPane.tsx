@@ -16,6 +16,7 @@ interface ReadingPaneProps {
   onForward: (message: MailMessage) => void;
   onDelete: (messageId: string) => void;
   onToggleFlag: (messageId: string, isFlagged: boolean) => void;
+  onOpenInChrome?: () => void;
 }
 
 function getInitials(name: string): string {
@@ -34,9 +35,11 @@ export function ReadingPane({
   onForward,
   onDelete,
   onToggleFlag,
+  onOpenInChrome,
 }: ReadingPaneProps): React.ReactElement {
   const [fullMessage, setFullMessage] = useState<MailMessage | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -131,8 +134,13 @@ export function ReadingPane({
     .join(', ');
   const isFlagged = message.flag?.flagStatus === 'flagged';
 
+  function handleContextMenu(e: React.MouseEvent): void {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }
+
   return (
-    <div className="reading-pane">
+    <div className="reading-pane" onClick={() => setContextMenu(null)}>
       <div className="reading-header">
         <h2 className="reading-subject">
           {message.subject || '(No subject)'}
@@ -179,7 +187,7 @@ export function ReadingPane({
         )}
       </div>
 
-      <div className="reading-body">
+      <div className="reading-body" onContextMenu={handleContextMenu}>
         {fullMessage?.body?.content ? (
           <iframe
             ref={iframeRef}
@@ -194,6 +202,23 @@ export function ReadingPane({
           </div>
         )}
       </div>
+
+      {contextMenu && onOpenInChrome && (
+        <div
+          className="context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x, position: 'fixed' }}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => {
+              onOpenInChrome();
+              setContextMenu(null);
+            }}
+          >
+            Open in Chrome as Session
+          </button>
+        </div>
+      )}
 
       {showDeleteConfirm && (
         <div className="confirm-overlay" onClick={() => setShowDeleteConfirm(false)}>

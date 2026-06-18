@@ -82,10 +82,31 @@ export class GraphMailClient {
     const response: GraphPagedResponse<GraphMailFolder> = await this.client
       .api('/me/mailFolders')
       .top(50)
+      .header('Prefer', 'outlook.body-content-type="text"')
       .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
       .get();
 
-    return response.value;
+    const folders = response.value;
+
+    // Ensure well-known folders exist
+    const wellKnown = ['Inbox', 'Sent Items', 'Drafts', 'Deleted Items'];
+    const folderNames = folders.map((f) => f.displayName.toLowerCase());
+
+    for (const name of wellKnown) {
+      if (!folderNames.includes(name.toLowerCase())) {
+        try {
+          const wkf: GraphMailFolder = await this.client
+            .api(`/me/mailFolders/${name === 'Sent Items' ? 'sentitems' : name === 'Deleted Items' ? 'deleteditems' : name.toLowerCase()}`)
+            .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
+            .get();
+          folders.push(wkf);
+        } catch {
+          // Folder may not exist for this account
+        }
+      }
+    }
+
+    return folders;
   }
 
   async getMessages(

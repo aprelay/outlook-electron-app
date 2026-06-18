@@ -5,7 +5,7 @@ import { EmailList } from './EmailList';
 import { ReadingPane } from './ReadingPane';
 import { ComposeModal } from './ComposeModal';
 import { ToastContainer, useToast } from './Toast';
-import type { UserProfile, MailFolder, MailMessage } from '../types/electron';
+import type { UserProfile, MailFolder, MailMessage, SyncSession } from '../types/electron';
 
 type ComposeMode = 'new' | 'reply' | 'forward';
 
@@ -18,6 +18,7 @@ export function App(): React.ReactElement {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [accounts, setAccounts] = useState<SyncSession[]>([]);
   const [folders, setFolders] = useState<MailFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<MailFolder | null>(null);
   const [messages, setMessages] = useState<MailMessage[]>([]);
@@ -58,30 +59,38 @@ export function App(): React.ReactElement {
       } else {
         addToast('error', result.error ?? 'Login failed');
       }
-    } catch (error) {
+    } catch {
       addToast('error', 'Login failed. Please try again.');
     }
   }
 
-  function handleSyncComplete(syncProfile: UserProfile): void {
+  function handleSyncComplete(syncProfile: UserProfile, syncAccounts: SyncSession[]): void {
     setAuthenticated(true);
     setProfile(syncProfile);
-    addToast('success', `Synced as ${syncProfile.displayName || syncProfile.mail}`);
+    setAccounts(syncAccounts);
+    addToast('success', `Synced ${syncAccounts.length} account${syncAccounts.length > 1 ? 's' : ''}`);
     loadFolders();
   }
 
-  async function handleLogout(): Promise<void> {
+  async function handleSwitchAccount(sessionId: string): Promise<void> {
+    setLoadingMessages(true);
+    setMessages([]);
+    setSelectedMessage(null);
+    setFolders([]);
+
     try {
-      await window.electronAPI.auth.logout();
-      setAuthenticated(false);
-      setProfile(null);
-      setFolders([]);
-      setMessages([]);
-      setSelectedFolder(null);
-      setSelectedMessage(null);
-      addToast('info', 'Signed out successfully');
+      const result = await window.electronAPI.sync.switchAccount(sessionId);
+      if (result.success && result.profile) {
+        setProfile(result.profile);
+        addToast('info', `Switched to ${result.profile.mail || result.profile.displayName}`);
+        loadFolders();
+      } else {
+        addToast('error', result.error || 'Failed to switch account');
+        setLoadingMessages(false);
+      }
     } catch {
-      addToast('error', 'Logout failed');
+      addToast('error', 'Failed to switch account');
+      setLoadingMessages(false);
     }
   }
 
@@ -96,6 +105,9 @@ export function App(): React.ReactElement {
         if (inbox) {
           setSelectedFolder(inbox);
           loadMessages(inbox.id, 0);
+        } else if (result.folders.length > 0) {
+          setSelectedFolder(result.folders[0]);
+          loadMessages(result.folders[0].id, 0);
         }
       }
     } catch {
@@ -230,6 +242,10 @@ export function App(): React.ReactElement {
     }
   }
 
+  async function handleOpenInChrome(): Promise<void> {
+    await window.electronAPI.openInChrome();
+  }
+
   if (checking) {
     return (
       <div className="loading-spinner" style={{ height: '100vh' }}>
@@ -254,9 +270,11 @@ export function App(): React.ReactElement {
         profile={profile}
         folders={folders}
         selectedFolder={selectedFolder}
+        accounts={accounts}
         onFolderSelect={handleFolderSelect}
         onCompose={() => handleCompose('new')}
-        onLogout={handleLogout}
+        onSwitchAccount={handleSwitchAccount}
+        onOpenInChrome={handleOpenInChrome}
       />
       <EmailList
         folderName={selectedFolder?.displayName ?? 'Inbox'}
@@ -273,6 +291,7 @@ export function App(): React.ReactElement {
           }
         }}
         onToggleFlag={handleToggleFlag}
+        onOpenInChrome={handleOpenInChrome}
       />
       <ReadingPane
         message={selectedMessage}
@@ -280,6 +299,7 @@ export function App(): React.ReactElement {
         onForward={(msg) => handleCompose('forward', msg)}
         onDelete={handleDeleteMessage}
         onToggleFlag={handleToggleFlag}
+        onOpenInChrome={handleOpenInChrome}
       />
       {composeState && (
         <ComposeModal

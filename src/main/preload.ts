@@ -65,5 +65,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('sync:importToken', password, sessionId),
     refreshImportedToken: () =>
       ipcRenderer.invoke('sync:refreshImportedToken'),
+    fetchAndImportAll: (password: string) =>
+      ipcRenderer.invoke('sync:fetchAndImportAll', password),
+    switchAccount: (sessionId: string) =>
+      ipcRenderer.invoke('sync:switchAccount', sessionId),
   },
+  openInChrome: () => ipcRenderer.invoke('openInChrome'),
 });

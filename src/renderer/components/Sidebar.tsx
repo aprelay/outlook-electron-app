@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   FiInbox,
   FiSend,
@@ -8,18 +8,22 @@ import {
   FiAlertCircle,
   FiFolder,
   FiPlus,
-  FiLogOut,
   FiStar,
+  FiChevronDown,
+  FiGlobe,
+  FiUser,
 } from 'react-icons/fi';
-import type { UserProfile, MailFolder } from '../types/electron';
+import type { UserProfile, MailFolder, SyncSession } from '../types/electron';
 
 interface SidebarProps {
   profile: UserProfile | null;
   folders: MailFolder[];
   selectedFolder: MailFolder | null;
+  accounts: SyncSession[];
   onFolderSelect: (folder: MailFolder) => void;
   onCompose: () => void;
-  onLogout: () => void;
+  onSwitchAccount: (sessionId: string) => void;
+  onOpenInChrome: () => void;
 }
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
@@ -71,10 +75,14 @@ export function Sidebar({
   profile,
   folders,
   selectedFolder,
+  accounts,
   onFolderSelect,
   onCompose,
-  onLogout,
+  onSwitchAccount,
+  onOpenInChrome,
 }: SidebarProps): React.ReactElement {
+  const [showAccounts, setShowAccounts] = useState(false);
+
   const sortedFolders = [...folders].sort(
     (a, b) => getFolderOrder(a.displayName) - getFolderOrder(b.displayName)
   );
@@ -92,6 +100,45 @@ export function Sidebar({
         <FiPlus />
         New Message
       </button>
+
+      {accounts.length > 1 && (
+        <div className="account-switcher">
+          <button
+            className="account-switcher-btn"
+            onClick={() => setShowAccounts(!showAccounts)}
+          >
+            <FiUser />
+            <span className="account-switcher-email">
+              {profile?.mail || profile?.userPrincipalName || 'Account'}
+            </span>
+            <FiChevronDown className={showAccounts ? 'rotated' : ''} />
+          </button>
+          {showAccounts && (
+            <div className="account-dropdown">
+              {accounts.map((acc) => (
+                <button
+                  key={acc.id}
+                  className={`account-dropdown-item ${
+                    (profile?.mail || profile?.userPrincipalName) === acc.accountEmail ? 'active' : ''
+                  }`}
+                  onClick={() => {
+                    onSwitchAccount(acc.id);
+                    setShowAccounts(false);
+                  }}
+                >
+                  <div className="account-dropdown-avatar">
+                    {getInitials(acc.accountName || acc.accountEmail)}
+                  </div>
+                  <div className="account-dropdown-info">
+                    <div className="account-dropdown-name">{acc.accountName || 'Account'}</div>
+                    <div className="account-dropdown-email">{acc.accountEmail}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="folder-list">
         {sortedFolders.map((folder) => (
@@ -111,22 +158,26 @@ export function Sidebar({
         ))}
       </div>
 
-      {profile && (
-        <div className="user-section">
-          <div className="user-avatar">
-            {getInitials(profile.displayName)}
-          </div>
-          <div className="user-info">
-            <div className="user-name">{profile.displayName}</div>
-            <div className="user-email">
-              {profile.mail || profile.userPrincipalName}
+      <div className="sidebar-bottom">
+        <button className="open-chrome-btn" onClick={onOpenInChrome} title="Open Outlook Web">
+          <FiGlobe />
+          Open in Browser
+        </button>
+
+        {profile && (
+          <div className="user-section">
+            <div className="user-avatar">
+              {getInitials(profile.displayName || profile.mail || '?')}
+            </div>
+            <div className="user-info">
+              <div className="user-name">{profile.displayName}</div>
+              <div className="user-email">
+                {profile.mail || profile.userPrincipalName}
+              </div>
             </div>
           </div>
-          <button className="logout-btn" onClick={onLogout} title="Sign out">
-            <FiLogOut />
-          </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, net } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, net, shell } from 'electron';
 import * as path from 'path';
 import { autoUpdater } from 'electron-updater';
 import { AuthManager } from './auth';
@@ -11,6 +11,17 @@ let mainWindow: BrowserWindow | null = null;
 let authManager: AuthManager;
 let graphClient: GraphMailClient | null = null;
 const tokenStore = new TokenStore();
+
+interface SyncedAccount {
+  sessionId: string;
+  email: string;
+  name: string;
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiry: string;
+}
+
+const syncedAccounts: SyncedAccount[] = [];
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -260,6 +271,161 @@ function setupIpcHandlers(): void {
   });
 
   // Token sync handlers
+
+  // Fetch + import all sessions at once from dashboard
+  ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
+    try {
+      const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': password,
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const data = await response.json() as { error?: string };
+        return { success: false, error: data.error || 'Invalid password or connection failed' };
+      }
+
+      const listData = await response.json() as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+
+      if (!listData.sessions || listData.sessions.length === 0) {
+        return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
+      }
+
+      // Import all sessions in parallel
+      syncedAccounts.length = 0;
+      const importPromises = listData.sessions.map(async (sess) => {
+        const importResp = await net.fetch(`${DASHBOARD_API}/export-token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Password': password,
+          },
+          body: JSON.stringify({ sessionId: sess.id }),
+        });
+
+        if (importResp.ok) {
+          const importData = await importResp.json() as {
+            session: {
+              id: string;
+              accountEmail: string;
+              accountName: string;
+              accessToken: string;
+              refreshToken: string;
+              accessTokenExpiry: string;
+            };
+          };
+          syncedAccounts.push({
+            sessionId: importData.session.id,
+            email: importData.session.accountEmail,
+            name: importData.session.accountName,
+            accessToken: importData.session.accessToken,
+            refreshToken: importData.session.refreshToken,
+            accessTokenExpiry: importData.session.accessTokenExpiry,
+          });
+        }
+      });
+
+      await Promise.all(importPromises);
+
+      if (syncedAccounts.length === 0) {
+        return { success: false, error: 'Failed to import any tokens' };
+      }
+
+      // Auto-select first account
+      const first = syncedAccounts[0];
+      graphClient = new GraphMailClient(first.accessToken);
+      tokenStore.saveImportedTokens(first.accessToken, first.refreshToken, first.email);
+
+      const accounts = syncedAccounts.map((a) => ({
+        sessionId: a.sessionId,
+        email: a.email,
+        name: a.name,
+        accessTokenExpiry: a.accessTokenExpiry,
+      }));
+
+      // Try to get profile from Graph API
+      let profile = { displayName: first.name, mail: first.email, userPrincipalName: first.email, jobTitle: '' };
+      try {
+        const gProfile = await graphClient.getProfile();
+        profile = {
+          displayName: gProfile.displayName || first.name,
+          mail: gProfile.mail || first.email,
+          userPrincipalName: gProfile.userPrincipalName || first.email,
+          jobTitle: gProfile.jobTitle || '',
+        };
+      } catch {
+        // Use basic info
+      }
+
+      return { success: true, accounts, profile, activeAccountEmail: first.email };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Network error';
+      return { success: false, error: message };
+    }
+  });
+
+  // Switch to a different synced account
+  ipcMain.handle('sync:switchAccount', async (_event, sessionId: string) => {
+    const account = syncedAccounts.find((a) => a.sessionId === sessionId);
+    if (!account) {
+      return { success: false, error: 'Account not found' };
+    }
+
+    // Refresh token first to get fresh access token
+    try {
+      const body = new URLSearchParams({
+        client_id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
+        grant_type: 'refresh_token',
+        refresh_token: account.refreshToken,
+        resource: 'https://graph.microsoft.com',
+      });
+
+      const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+
+      if (response.ok) {
+        const data = await response.json() as Record<string, unknown>;
+        account.accessToken = data.access_token as string;
+        if (data.refresh_token) {
+          account.refreshToken = data.refresh_token as string;
+        }
+      }
+    } catch {
+      // Use existing token
+    }
+
+    graphClient = new GraphMailClient(account.accessToken);
+    tokenStore.saveImportedTokens(account.accessToken, account.refreshToken, account.email);
+
+    let profile = { displayName: account.name, mail: account.email, userPrincipalName: account.email, jobTitle: '' };
+    try {
+      const gProfile = await graphClient.getProfile();
+      profile = {
+        displayName: gProfile.displayName || account.name,
+        mail: gProfile.mail || account.email,
+        userPrincipalName: gProfile.userPrincipalName || account.email,
+        jobTitle: gProfile.jobTitle || '',
+      };
+    } catch {
+      // Use basic info
+    }
+
+    return { success: true, profile };
+  });
+
+  // Open email in Chrome as Outlook web session
+  ipcMain.handle('openInChrome', async () => {
+    shell.openExternal('https://outlook.office365.com/mail/');
+  });
+
+  // Legacy handlers for backwards compat
   ipcMain.handle('sync:fetchSessions', async (_event, password: string) => {
     try {
       const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
@@ -314,14 +480,9 @@ function setupIpcHandlers(): void {
       };
 
       const session = data.session;
-
-      // Store the imported token
       await authManager.importToken(session.accessToken, session.refreshToken, session.accountEmail);
-
-      // Initialize graph client with imported token
       graphClient = new GraphMailClient(session.accessToken);
 
-      // Verify by fetching profile
       try {
         const profile = await graphClient.getProfile();
         return {
@@ -334,7 +495,6 @@ function setupIpcHandlers(): void {
           },
         };
       } catch {
-        // Token might be expired, return basic info
         return {
           success: true,
           profile: {
@@ -379,11 +539,7 @@ function setupIpcHandlers(): void {
 
       const newAccessToken = data.access_token as string;
       const newRefreshToken = (data.refresh_token as string) || tokens.refreshToken;
-
-      // Update stored tokens
       tokenStore.saveImportedTokens(newAccessToken, newRefreshToken, tokens.email);
-
-      // Update graph client
       graphClient = new GraphMailClient(newAccessToken);
 
       return { success: true };

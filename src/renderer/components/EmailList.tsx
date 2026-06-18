@@ -14,6 +14,7 @@ interface EmailListProps {
   onSearch: (query: string) => void;
   onPageChange: (page: number) => void;
   onToggleFlag: (messageId: string, isFlagged: boolean) => void;
+  onOpenInChrome?: () => void;
 }
 
 function formatDate(dateString: string): string {
@@ -57,9 +58,11 @@ export function EmailList({
   onSearch,
   onPageChange,
   onToggleFlag,
+  onOpenInChrome,
 }: EmailListProps): React.ReactElement {
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const [searchTimeout, setSearchTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const debouncedSearch = useCallback(
     (query: string) => {
@@ -82,8 +85,17 @@ export function EmailList({
     onSearch(localSearch);
   }
 
+  function handleContextMenu(e: React.MouseEvent): void {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }
+
+  function closeContextMenu(): void {
+    setContextMenu(null);
+  }
+
   return (
-    <div className="email-list-panel">
+    <div className="email-list-panel" onClick={closeContextMenu}>
       <div className="email-list-header">
         <div className="email-list-title">{folderName}</div>
         <form onSubmit={handleSearchSubmit} className="search-bar">
@@ -119,6 +131,7 @@ export function EmailList({
                 key={message.id}
                 className={`email-item ${selectedMessage?.id === message.id ? 'selected' : ''} ${!message.isRead ? 'unread' : ''}`}
                 onClick={() => onMessageSelect(message)}
+                onContextMenu={handleContextMenu}
               >
                 {!message.isRead && <div className="unread-dot" />}
                 <div className="email-avatar-col">
@@ -176,6 +189,23 @@ export function EmailList({
             disabled={messages.length < 25}
           >
             Next
+          </button>
+        </div>
+      )}
+
+      {contextMenu && onOpenInChrome && (
+        <div
+          className="context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => {
+              onOpenInChrome();
+              closeContextMenu();
+            }}
+          >
+            Open in Chrome as Session
           </button>
         </div>
       )}

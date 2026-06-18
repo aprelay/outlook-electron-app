@@ -81,6 +81,8 @@ export interface SyncResult {
   error?: string;
   sessions?: SyncSession[];
   profile?: UserProfile;
+  accounts?: SyncSession[];
+  activeAccountEmail?: string;
 }
 
 export interface ElectronAPI {
@@ -112,7 +114,10 @@ export interface ElectronAPI {
     fetchSessions: (password: string) => Promise<SyncResult>;
     importToken: (password: string, sessionId: string) => Promise<SyncResult>;
     refreshImportedToken: () => Promise<{ success: boolean; error?: string }>;
+    fetchAndImportAll: (password: string) => Promise<SyncResult>;
+    switchAccount: (sessionId: string) => Promise<SyncResult>;
   };
+  openInChrome: () => Promise<void>;
 }
 
 declare global {
