@@ -10,7 +10,7 @@ import { TokenStore } from './tokenStore';
 
 const MSAL_CONFIG: Configuration = {
   auth: {
-    clientId: process.env.AZURE_CLIENT_ID || '04b07795-a710-4e83-87bc-c9a5060bcee3',
+    clientId: process.env.AZURE_CLIENT_ID || 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
     authority: 'https://login.microsoftonline.com/common',
   },
   system: {

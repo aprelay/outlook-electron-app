@@ -1,6 +1,6 @@
 interface Env {}
 
-const CLIENT_ID = '04b07795-a710-4e83-87bc-c9a5060bcee3';
+const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
 const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
