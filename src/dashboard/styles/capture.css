@@ -289,6 +289,46 @@
   line-height: 1.6;
 }
 
+.capture-auth-email {
+  margin-bottom: 4px;
+  color: #323130;
+}
+
+.capture-view-dashboard-btn {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 12px 32px;
+  background: #0078d4;
+  color: white;
+  border-radius: 28px;
+  font-weight: 700;
+  font-size: 15px;
+  text-decoration: none;
+  transition: background 150ms;
+}
+
+.capture-view-dashboard-btn:hover {
+  background: #106ebe;
+}
+
+.capture-another-btn {
+  display: block;
+  margin: 12px auto 0;
+  padding: 8px 20px;
+  background: none;
+  color: #0078d4;
+  border: 1px solid #0078d4;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.capture-another-btn:hover {
+  background: #deecf9;
+}
+
 /* Expired State */
 .capture-expired {
   text-align: center;
