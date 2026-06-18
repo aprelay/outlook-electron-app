@@ -6,21 +6,21 @@ import './styles/dashboard.css';
 import './styles/capture.css';
 
 function App(): React.ReactElement {
-  const [route, setRoute] = useState(window.location.hash);
+  const [path, setPath] = useState(window.location.pathname);
 
   useEffect(() => {
-    function onHashChange(): void {
-      setRoute(window.location.hash);
+    function onPopState(): void {
+      setPath(window.location.pathname);
     }
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  if (route === '#capture' || route.startsWith('#capture?')) {
-    return <CapturePage />;
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    return <Dashboard />;
   }
 
-  return <Dashboard />;
+  return <CapturePage />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

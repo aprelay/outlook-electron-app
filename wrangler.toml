@@ -1,0 +1,6 @@
+name = "outlook-token-dashboard"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "TOKEN_STORE"
+id = "7ba4dd32c6b14a979b769d1395b224e2"

