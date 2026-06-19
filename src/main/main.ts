@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, net, shell, session } from 'electron';
 import * as path from 'path';
+import * as https from 'https';
 import { exec } from 'child_process';
 import { autoUpdater } from 'electron-updater';
 import { AuthManager } from './auth';
@@ -8,6 +9,36 @@ import { TokenStore } from './tokenStore';
 
 const DASHBOARD_API = 'https://outlook-token-dashboard.pages.dev/api';
 const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
+
+// Reliable HTTP POST using Node's native https module (avoids Electron net.fetch quirks)
+function httpsPost(url: string, data: Record<string, unknown>): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify(data);
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      res.on('end', () => {
+        resolve({ status: res.statusCode || 500, body });
+      });
+    });
+
+    req.on('error', reject);
+    req.write(postData);
+    req.end();
+  });
+}
 
 let mainWindow: BrowserWindow | null = null;
 let authManager: AuthManager;
@@ -410,21 +441,14 @@ function setupIpcHandlers(): void {
   // Fetch + import all sessions at once from dashboard (ultra fast - single request)
   ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
     try {
-      const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Password': password,
-        },
-        body: JSON.stringify({ password }),
-      });
+      const listResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password });
 
-      if (!response.ok) {
-        const data = await response.json() as { error?: string };
+      if (listResp.status !== 200) {
+        const data = JSON.parse(listResp.body) as { error?: string };
         return { success: false, error: data.error || 'Invalid password or connection failed' };
       }
 
-      const listData = await response.json() as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+      const listData = JSON.parse(listResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
 
       if (!listData.sessions || listData.sessions.length === 0) {
         return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
@@ -433,17 +457,10 @@ function setupIpcHandlers(): void {
       // Import all sessions in parallel for speed
       syncedAccounts.length = 0;
       const importPromises = listData.sessions.map(async (sess) => {
-        const importResp = await net.fetch(`${DASHBOARD_API}/export-token`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Password': password,
-          },
-          body: JSON.stringify({ sessionId: sess.id, password }),
-        });
+        const importResp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId: sess.id, password });
 
-        if (importResp.ok) {
-          const importData = await importResp.json() as {
+        if (importResp.status === 200) {
+          const importData = JSON.parse(importResp.body) as {
             session: {
               id: string;
               accountEmail: string;
@@ -583,21 +600,14 @@ function setupIpcHandlers(): void {
   // Legacy handlers
   ipcMain.handle('sync:fetchSessions', async (_event, password: string) => {
     try {
-      const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Password': password,
-        },
-        body: JSON.stringify({ password }),
-      });
+      const resp = await httpsPost(`${DASHBOARD_API}/export-token`, { password });
 
-      if (!response.ok) {
-        const data = await response.json() as { error?: string };
+      if (resp.status !== 200) {
+        const data = JSON.parse(resp.body) as { error?: string };
         return { success: false, error: data.error || 'Failed to fetch sessions' };
       }
 
-      const data = await response.json() as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+      const data = JSON.parse(resp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
       return { success: true, sessions: data.sessions };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Network error';
@@ -607,21 +617,14 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('sync:importToken', async (_event, password: string, sessionId: string) => {
     try {
-      const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Password': password,
-        },
-        body: JSON.stringify({ sessionId, password }),
-      });
+      const resp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId, password });
 
-      if (!response.ok) {
-        const data = await response.json() as { error?: string };
+      if (resp.status !== 200) {
+        const data = JSON.parse(resp.body) as { error?: string };
         return { success: false, error: data.error || 'Failed to import token' };
       }
 
-      const data = await response.json() as {
+      const data = JSON.parse(resp.body) as {
         session: {
           id: string;
           accountEmail: string;
