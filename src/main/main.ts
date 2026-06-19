@@ -150,30 +150,37 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   try {
     const url = SERVICE_URLS[service] || SERVICE_URLS.owa;
 
-    // Get access token for the OWA/Office resource
+    // Get access token for the target resource
     const resource = service === 'admin' ? 'https://admin.microsoft.com'
       : service === 'onedrive' ? 'https://graph.microsoft.com'
       : 'https://outlook.office365.com';
 
     const token = await getTokenForResource(account, resource);
-    if (!token) {
-      // Fallback: just open the URL with login_hint
-      shell.openExternal(`${url}?login_hint=${encodeURIComponent(account.email)}`);
-      return { success: true };
-    }
 
-    // Create an isolated BrowserWindow with Bearer token injection
+    // Use persistent session partition so cookies survive between launches
+    // After first sign-in, subsequent opens are instant
     const sessionPartition = `persist:portal-${account.sessionId}-${service}`;
     const browserSession = session.fromPartition(sessionPartition);
 
-    // Inject Bearer token into all requests to Microsoft domains
-    browserSession.webRequest.onBeforeSendHeaders(
-      { urls: ['https://*.microsoft.com/*', 'https://*.office.com/*', 'https://*.office365.com/*', 'https://*.live.com/*', 'https://*.sharepoint.com/*'] },
-      (details, callback) => {
-        details.requestHeaders['Authorization'] = `Bearer ${token}`;
-        callback({ requestHeaders: details.requestHeaders });
-      }
-    );
+    if (token) {
+      // Inject Bearer token into ALL Microsoft-related requests
+      browserSession.webRequest.onBeforeSendHeaders(
+        { urls: [
+          'https://*.microsoft.com/*',
+          'https://*.microsoftonline.com/*',
+          'https://*.office.com/*',
+          'https://*.office365.com/*',
+          'https://*.live.com/*',
+          'https://*.sharepoint.com/*',
+          'https://*.outlook.com/*',
+          'https://*.onenote.com/*',
+        ] },
+        (details, callback) => {
+          details.requestHeaders['Authorization'] = `Bearer ${token}`;
+          callback({ requestHeaders: details.requestHeaders });
+        }
+      );
+    }
 
     const portalWindow = new BrowserWindow({
       width: 1280,
@@ -186,7 +193,57 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       },
     });
 
-    portalWindow.loadURL(url);
+    // Navigate with login_hint to pre-fill email if login is needed
+    const loginHint = encodeURIComponent(account.email);
+    const targetUrl = url.includes('?')
+      ? `${url}&login_hint=${loginHint}`
+      : `${url}?login_hint=${loginHint}`;
+
+    // If we have a token, try to inject MSAL cache into sessionStorage
+    // This allows OWA/Office apps to pick up the token without sign-in
+    if (token) {
+      portalWindow.webContents.on('did-finish-load', () => {
+        const msalScript = `
+          try {
+            // Set MSAL-compatible token cache in sessionStorage
+            const accountKey = '${account.email}-login.microsoftonline.com-';
+            const accountEntity = {
+              homeAccountId: '${account.email}',
+              environment: 'login.microsoftonline.com',
+              realm: 'common',
+              localAccountId: '${account.sessionId}',
+              username: '${account.email}',
+              authorityType: 'MSSTS',
+              name: '${account.name || account.email}'
+            };
+            sessionStorage.setItem(accountKey, JSON.stringify(accountEntity));
+
+            // Set access token
+            const atKey = accountKey + 'accesstoken-${CLIENT_ID}-common-';
+            const atEntity = {
+              homeAccountId: '${account.email}',
+              environment: 'login.microsoftonline.com',
+              credentialType: 'AccessToken',
+              clientId: '${CLIENT_ID}',
+              realm: 'common',
+              secret: '${token}',
+              target: '${resource}',
+              cachedAt: String(Math.floor(Date.now() / 1000)),
+              expiresOn: String(Math.floor(Date.now() / 1000) + 3600),
+              extendedExpiresOn: String(Math.floor(Date.now() / 1000) + 7200)
+            };
+            sessionStorage.setItem(atKey, JSON.stringify(atEntity));
+
+            // Also try localStorage for persistent MSAL cache
+            localStorage.setItem(accountKey, JSON.stringify(accountEntity));
+            localStorage.setItem(atKey, JSON.stringify(atEntity));
+          } catch(e) {}
+        `;
+        portalWindow.webContents.executeJavaScript(msalScript).catch(() => {});
+      });
+    }
+
+    portalWindow.loadURL(targetUrl);
     return { success: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to launch browser session';
