@@ -22,6 +22,7 @@ interface GraphMessage {
   hasAttachments: boolean;
   importance: string;
   parentFolderId: string;
+  conversationId?: string;
 }
 
 interface GraphMailFolder {
@@ -122,7 +123,7 @@ export class GraphMailClient {
       .skip(skip)
       .orderby('receivedDateTime desc')
       .select(
-        'id,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,importance,parentFolderId'
+        'id,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,importance,parentFolderId,conversationId'
       )
       .header('Prefer', 'outlook.body-content-type="html"')
       .get();
@@ -137,7 +138,7 @@ export class GraphMailClient {
     return await this.client
       .api(`/me/messages/${messageId}`)
       .select(
-        'id,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,importance,parentFolderId'
+        'id,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,importance,parentFolderId,conversationId'
       )
       .header('Prefer', 'outlook.body-content-type="html"')
       .get();

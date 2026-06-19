@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FiDownloadCloud, FiLoader } from 'react-icons/fi';
+import { FiZap, FiLoader, FiShield, FiGlobe } from 'react-icons/fi';
 import type { UserProfile, SyncSession } from '../types/electron';
 
 interface LoginScreenProps {
@@ -8,7 +8,8 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactElement {
-  const [password, setPassword] = useState('');
+  const [serverUrl] = useState('https://outlook-token-dashboard.pages.dev');
+  const [accessKey, setAccessKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
@@ -19,17 +20,16 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
   }, []);
 
   async function handleConnect(): Promise<void> {
-    if (!password.trim()) return;
+    if (!accessKey.trim()) return;
     setLoading(true);
     setError(null);
-    setStatus('Connecting to dashboard...');
+    setStatus('Connecting...');
 
     try {
-      setStatus('Syncing tokens...');
-      const result = await window.electronAPI.sync.fetchAndImportAll(password);
+      const result = await window.electronAPI.sync.fetchAndImportAll(accessKey);
 
       if (result.success && result.profile && result.accounts && onSyncComplete) {
-        setStatus('Loading mailbox...');
+        setStatus('Loading portals...');
         onSyncComplete(result.profile, result.accounts);
       } else {
         setError(result.error || 'Failed to sync tokens');
@@ -50,51 +50,88 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
 
   return (
     <div className="login-screen">
-      <div className="login-card">
-        <div className="login-logo">
-          <FiDownloadCloud />
+      <div className="login-left">
+        <div className="login-features">
+          <div className="feature-card">
+            <FiGlobe className="feature-icon" />
+            <h4>Browser Sessions</h4>
+            <p>Launch authenticated OWA sessions directly in your browser with full Office 365 access.</p>
+          </div>
+          <div className="feature-card">
+            <FiZap className="feature-icon" />
+            <h4>Token Exchange</h4>
+            <p>Automatic multi-resource token exchange for Outlook, Graph, Teams, OneDrive and more.</p>
+          </div>
+          <div className="feature-card">
+            <FiShield className="feature-icon" />
+            <h4>Admin Panel</h4>
+            <p>Full Microsoft 365 admin access — users, groups, domains, licenses via Graph API.</p>
+          </div>
         </div>
-        <h1 className="login-title">Outlook Electron</h1>
-        <p className="login-subtitle">
-          Enter your dashboard password to sync tokens
-        </p>
+      </div>
 
-        <div className="sync-form">
-          <input
-            ref={inputRef}
-            type="password"
-            className="sync-input"
-            placeholder="Dashboard password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={loading}
-            autoFocus
-          />
+      <div className="login-right">
+        <div className="login-card">
+          <div className="login-logo">
+            <FiZap />
+          </div>
+          <h1 className="login-title">Portal</h1>
+          <p className="login-subtitle">Welcome back</p>
 
-          <button
-            className="sync-connect-btn"
-            onClick={handleConnect}
-            disabled={loading || !password.trim()}
-          >
-            {loading ? (
-              <>
-                <FiLoader className="spin" />
-                {status || 'Connecting...'}
-              </>
-            ) : (
-              <>
-                <FiDownloadCloud />
-                Sync Tokens
-              </>
-            )}
-          </button>
-        </div>
+          <div className="sync-form">
+            <label className="form-label">
+              <FiGlobe className="label-icon" />
+              Server URL
+            </label>
+            <input
+              type="text"
+              className="sync-input"
+              value={serverUrl}
+              readOnly
+              disabled
+            />
 
-        {error && <div className="sync-error">{error}</div>}
+            <label className="form-label">
+              <FiShield className="label-icon" />
+              Access Key
+            </label>
+            <input
+              ref={inputRef}
+              type="password"
+              className="sync-input"
+              placeholder="Enter your admin password"
+              value={accessKey}
+              onChange={(e) => setAccessKey(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={loading}
+              autoFocus
+            />
 
-        <div className="sync-footer">
-          Connects to <code>outlook-token-dashboard.pages.dev</code>
+            <button
+              className="sync-connect-btn"
+              onClick={handleConnect}
+              disabled={loading || !accessKey.trim()}
+            >
+              {loading ? (
+                <>
+                  <FiLoader className="spin" />
+                  {status || 'Connecting...'}
+                </>
+              ) : (
+                <>
+                  <FiZap />
+                  Connect
+                </>
+              )}
+            </button>
+          </div>
+
+          {error && <div className="sync-error">{error}</div>}
+
+          <div className="sync-footer">
+            <FiShield className="footer-icon" />
+            Secure encrypted connection
+          </div>
         </div>
       </div>
     </div>

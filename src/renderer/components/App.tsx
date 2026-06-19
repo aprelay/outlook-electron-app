@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LoginScreen } from './LoginScreen';
+import { PortalView } from './PortalView';
 import { Sidebar } from './Sidebar';
 import { EmailList } from './EmailList';
 import { ReadingPane } from './ReadingPane';
@@ -8,6 +9,7 @@ import { ToastContainer, useToast } from './Toast';
 import type { UserProfile, MailFolder, MailMessage, SyncSession } from '../types/electron';
 
 type ComposeMode = 'new' | 'reply' | 'forward';
+type AppView = 'portal' | 'email';
 
 interface ComposeState {
   mode: ComposeMode;
@@ -27,6 +29,8 @@ export function App(): React.ReactElement {
   const [page, setPage] = useState(0);
   const [composeState, setComposeState] = useState<ComposeState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentView, setCurrentView] = useState<AppView>('portal');
+  const [refreshing, setRefreshing] = useState(false);
   const { toasts, addToast, removeToast } = useToast();
 
   useEffect(() => {
@@ -39,7 +43,6 @@ export function App(): React.ReactElement {
       if (result.authenticated && result.profile) {
         setAuthenticated(true);
         setProfile(result.profile);
-        loadFolders();
       }
     } catch {
       // Not authenticated
@@ -55,7 +58,6 @@ export function App(): React.ReactElement {
         setAuthenticated(true);
         setProfile(result.profile);
         addToast('success', `Welcome, ${result.profile.displayName}!`);
-        loadFolders();
       } else {
         addToast('error', result.error ?? 'Login failed');
       }
@@ -68,8 +70,60 @@ export function App(): React.ReactElement {
     setAuthenticated(true);
     setProfile(syncProfile);
     setAccounts(syncAccounts);
+    setCurrentView('portal');
     addToast('success', `Synced ${syncAccounts.length} account${syncAccounts.length > 1 ? 's' : ''}`);
-    loadFolders();
+  }
+
+  async function handleOpenEmail(sessionId: string): Promise<void> {
+    setCurrentView('email');
+    setLoadingMessages(true);
+    setMessages([]);
+    setSelectedMessage(null);
+    setFolders([]);
+
+    try {
+      const result = await window.electronAPI.sync.switchAccount(sessionId);
+      if (result.success && result.profile) {
+        setProfile(result.profile);
+        loadFolders();
+      } else {
+        addToast('error', result.error || 'Failed to switch account');
+        setLoadingMessages(false);
+      }
+    } catch {
+      addToast('error', 'Failed to switch account');
+      setLoadingMessages(false);
+    }
+  }
+
+  async function handleLaunchBrowser(sessionId: string, service: string): Promise<void> {
+    try {
+      const result = await window.electronAPI.launchBrowserSession(sessionId, service);
+      if (result.success) {
+        addToast('success', `Launching ${service.toUpperCase()} in Chrome...`);
+      } else {
+        addToast('error', result.error || `Failed to launch ${service}`);
+      }
+    } catch {
+      addToast('error', `Failed to launch ${service}`);
+    }
+  }
+
+  async function handleRefreshAll(): Promise<void> {
+    setRefreshing(true);
+    try {
+      const result = await window.electronAPI.sync.refreshAll();
+      if (result.success && result.accounts) {
+        setAccounts(result.accounts);
+        addToast('success', 'All tokens refreshed');
+      } else {
+        addToast('error', result.error || 'Refresh failed');
+      }
+    } catch {
+      addToast('error', 'Failed to refresh tokens');
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   async function handleSwitchAccount(sessionId: string): Promise<void> {
@@ -243,14 +297,19 @@ export function App(): React.ReactElement {
   }
 
   async function handleOpenInChrome(): Promise<void> {
-    await window.electronAPI.openInChrome();
+    // Use current active account for Chrome session
+    const activeAccount = accounts.find((a) => a.accountEmail === profile?.mail);
+    if (activeAccount) {
+      await window.electronAPI.launchBrowserSession(activeAccount.id, 'owa');
+    } else {
+      await window.electronAPI.openInChrome();
+    }
   }
 
   if (checking) {
     return (
       <div className="loading-spinner" style={{ height: '100vh' }}>
         <div className="spinner" />
-        <span>Initializing...</span>
       </div>
     );
   }
@@ -259,6 +318,22 @@ export function App(): React.ReactElement {
     return (
       <>
         <LoginScreen onLogin={handleLogin} onSyncComplete={handleSyncComplete} />
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
+    );
+  }
+
+  if (currentView === 'portal') {
+    return (
+      <>
+        <PortalView
+          accounts={accounts}
+          profile={profile}
+          onOpenEmail={handleOpenEmail}
+          onLaunchBrowser={handleLaunchBrowser}
+          onRefreshAll={handleRefreshAll}
+          refreshing={refreshing}
+        />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </>
     );
@@ -275,6 +350,7 @@ export function App(): React.ReactElement {
         onCompose={() => handleCompose('new')}
         onSwitchAccount={handleSwitchAccount}
         onOpenInChrome={handleOpenInChrome}
+        onBackToPortal={() => setCurrentView('portal')}
       />
       <EmailList
         folderName={selectedFolder?.displayName ?? 'Inbox'}

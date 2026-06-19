@@ -12,6 +12,7 @@ import {
   FiChevronDown,
   FiGlobe,
   FiUser,
+  FiArrowLeft,
 } from 'react-icons/fi';
 import type { UserProfile, MailFolder, SyncSession } from '../types/electron';
 
@@ -24,6 +25,7 @@ interface SidebarProps {
   onCompose: () => void;
   onSwitchAccount: (sessionId: string) => void;
   onOpenInChrome: () => void;
+  onBackToPortal?: () => void;
 }
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
@@ -80,6 +82,7 @@ export function Sidebar({
   onCompose,
   onSwitchAccount,
   onOpenInChrome,
+  onBackToPortal,
 }: SidebarProps): React.ReactElement {
   const [showAccounts, setShowAccounts] = useState(false);
 
@@ -90,6 +93,11 @@ export function Sidebar({
   return (
     <div className="sidebar">
       <div className="sidebar-header">
+        {onBackToPortal && (
+          <button className="back-to-portal-btn" onClick={onBackToPortal}>
+            <FiArrowLeft /> Portal
+          </button>
+        )}
         <h2>
           <FiStar style={{ marginRight: 8, verticalAlign: 'middle' }} />
           Mail

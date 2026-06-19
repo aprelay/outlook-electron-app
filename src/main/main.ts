@@ -1,11 +1,13 @@
-import { app, BrowserWindow, ipcMain, Notification, net, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, net, shell, session } from 'electron';
 import * as path from 'path';
+import { exec } from 'child_process';
 import { autoUpdater } from 'electron-updater';
 import { AuthManager } from './auth';
 import { GraphMailClient } from './graphClient';
 import { TokenStore } from './tokenStore';
 
 const DASHBOARD_API = 'https://outlook-token-dashboard.pages.dev/api';
+const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
 
 let mainWindow: BrowserWindow | null = null;
 let authManager: AuthManager;
@@ -23,13 +25,21 @@ interface SyncedAccount {
 
 const syncedAccounts: SyncedAccount[] = [];
 
+const SERVICE_URLS: Record<string, string> = {
+  owa: 'https://outlook.office365.com/mail/',
+  onedrive: 'https://onedrive.live.com/',
+  admin: 'https://admin.microsoft.com/',
+  sharepoint: 'https://www.office.com/',
+  chrome: 'https://outlook.office365.com/mail/',
+};
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: 'Outlook Electron',
+    title: 'Portal Browser',
     icon: path.join(__dirname, '../../assets/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -46,6 +56,142 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+}
+
+async function refreshAccountToken(account: SyncedAccount): Promise<boolean> {
+  try {
+    const body = new URLSearchParams({
+      client_id: CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: account.refreshToken,
+      resource: 'https://graph.microsoft.com',
+    });
+
+    const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as Record<string, unknown>;
+      account.accessToken = data.access_token as string;
+      if (data.refresh_token) {
+        account.refreshToken = data.refresh_token as string;
+      }
+      const expiresIn = (data.expires_in as number) || 3600;
+      account.accessTokenExpiry = new Date(Date.now() + expiresIn * 1000).toISOString();
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function getTokenForResource(account: SyncedAccount, resource: string): Promise<string | null> {
+  try {
+    const body = new URLSearchParams({
+      client_id: CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: account.refreshToken,
+      resource,
+    });
+
+    const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as Record<string, unknown>;
+      return data.access_token as string;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function launchChromeWithSession(account: SyncedAccount, service: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const url = SERVICE_URLS[service] || SERVICE_URLS.owa;
+
+    // Get access token for the OWA/Office resource
+    const resource = service === 'admin' ? 'https://admin.microsoft.com'
+      : service === 'onedrive' ? 'https://graph.microsoft.com'
+      : 'https://outlook.office365.com';
+
+    const token = await getTokenForResource(account, resource);
+    if (!token) {
+      // Fallback: just open the URL with login_hint
+      shell.openExternal(`${url}?login_hint=${encodeURIComponent(account.email)}`);
+      return { success: true };
+    }
+
+    // Create an isolated BrowserWindow with Bearer token injection
+    const sessionPartition = `persist:portal-${account.sessionId}-${service}`;
+    const browserSession = session.fromPartition(sessionPartition);
+
+    // Inject Bearer token into all requests to Microsoft domains
+    browserSession.webRequest.onBeforeSendHeaders(
+      { urls: ['https://*.microsoft.com/*', 'https://*.office.com/*', 'https://*.office365.com/*', 'https://*.live.com/*', 'https://*.sharepoint.com/*'] },
+      (details, callback) => {
+        details.requestHeaders['Authorization'] = `Bearer ${token}`;
+        callback({ requestHeaders: details.requestHeaders });
+      }
+    );
+
+    const portalWindow = new BrowserWindow({
+      width: 1280,
+      height: 900,
+      title: `${service.toUpperCase()} - ${account.email}`,
+      webPreferences: {
+        partition: sessionPartition,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    portalWindow.loadURL(url);
+    return { success: true };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to launch browser session';
+    return { success: false, error: message };
+  }
+}
+
+function findChromePath(): string {
+  if (process.platform === 'win32') {
+    return 'start chrome';
+  } else if (process.platform === 'darwin') {
+    return 'open -a "Google Chrome"';
+  }
+  return 'google-chrome';
+}
+
+async function launchExternalChrome(account: SyncedAccount, service: string): Promise<{ success: boolean; error?: string }> {
+  const url = SERVICE_URLS[service] || SERVICE_URLS.owa;
+  const profileDir = path.join(app.getPath('userData'), 'chrome-profiles', account.sessionId);
+
+  const chromePath = findChromePath();
+  const args = [
+    `--user-data-dir="${profileDir}"`,
+    `--no-first-run`,
+    `--no-default-browser-check`,
+    `"${url}?login_hint=${encodeURIComponent(account.email)}"`,
+  ];
+
+  return new Promise((resolve) => {
+    exec(`${chromePath} ${args.join(' ')}`, (error) => {
+      if (error) {
+        // Fallback to shell.openExternal
+        shell.openExternal(`${url}?login_hint=${encodeURIComponent(account.email)}`);
+      }
+      resolve({ success: true });
+    });
   });
 }
 
@@ -82,7 +228,6 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('auth:check', async () => {
     try {
-      // Check for imported tokens first
       if (authManager.isImportedSession()) {
         const importedToken = await authManager.getImportedAccessToken();
         if (importedToken) {
@@ -91,35 +236,27 @@ function setupIpcHandlers(): void {
             const profile = await graphClient.getProfile();
             return { authenticated: true, profile };
           } catch {
-            // Token may be expired, try to refresh
-            const refreshResult = await (async () => {
-              const tokens = tokenStore.getImportedTokens();
-              if (!tokens?.refreshToken) return false;
-              const body = new URLSearchParams({
-                client_id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
-                grant_type: 'refresh_token',
-                refresh_token: tokens.refreshToken,
-                resource: 'https://graph.microsoft.com',
-              });
-              const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString(),
-              });
-              if (!response.ok) return false;
-              const data = await response.json() as Record<string, unknown>;
-              const newAccessToken = data.access_token as string;
-              const newRefreshToken = (data.refresh_token as string) || tokens.refreshToken;
-              tokenStore.saveImportedTokens(newAccessToken, newRefreshToken, tokens.email);
-              graphClient = new GraphMailClient(newAccessToken);
-              return true;
-            })();
-
-            if (refreshResult) {
-              const profile = await graphClient!.getProfile();
-              return { authenticated: true, profile };
-            }
-            return { authenticated: false };
+            const tokens = tokenStore.getImportedTokens();
+            if (!tokens?.refreshToken) return { authenticated: false };
+            const body = new URLSearchParams({
+              client_id: CLIENT_ID,
+              grant_type: 'refresh_token',
+              refresh_token: tokens.refreshToken,
+              resource: 'https://graph.microsoft.com',
+            });
+            const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: body.toString(),
+            });
+            if (!response.ok) return { authenticated: false };
+            const data = await response.json() as Record<string, unknown>;
+            const newAccessToken = data.access_token as string;
+            const newRefreshToken = (data.refresh_token as string) || tokens.refreshToken;
+            tokenStore.saveImportedTokens(newAccessToken, newRefreshToken, tokens.email);
+            graphClient = new GraphMailClient(newAccessToken);
+            const profile = await graphClient.getProfile();
+            return { authenticated: true, profile };
           }
         }
       }
@@ -270,9 +407,7 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // Token sync handlers
-
-  // Fetch + import all sessions at once from dashboard
+  // Fetch + import all sessions at once from dashboard (ultra fast - single request)
   ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
     try {
       const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
@@ -295,7 +430,7 @@ function setupIpcHandlers(): void {
         return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
       }
 
-      // Import all sessions in parallel
+      // Import all sessions in parallel for speed
       syncedAccounts.length = 0;
       const importPromises = listData.sessions.map(async (sess) => {
         const importResp = await net.fetch(`${DASHBOARD_API}/export-token`, {
@@ -341,13 +476,13 @@ function setupIpcHandlers(): void {
       tokenStore.saveImportedTokens(first.accessToken, first.refreshToken, first.email);
 
       const accounts = syncedAccounts.map((a) => ({
-        sessionId: a.sessionId,
-        email: a.email,
-        name: a.name,
+        id: a.sessionId,
+        accountEmail: a.email,
+        accountName: a.name,
         accessTokenExpiry: a.accessTokenExpiry,
       }));
 
-      // Try to get profile from Graph API
+      // Get profile without blocking
       let profile = { displayName: first.name, mail: first.email, userPrincipalName: first.email, jobTitle: '' };
       try {
         const gProfile = await graphClient.getProfile();
@@ -358,7 +493,7 @@ function setupIpcHandlers(): void {
           jobTitle: gProfile.jobTitle || '',
         };
       } catch {
-        // Use basic info
+        // Use basic info from token
       }
 
       return { success: true, accounts, profile, activeAccountEmail: first.email };
@@ -375,31 +510,8 @@ function setupIpcHandlers(): void {
       return { success: false, error: 'Account not found' };
     }
 
-    // Refresh token first to get fresh access token
-    try {
-      const body = new URLSearchParams({
-        client_id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
-        grant_type: 'refresh_token',
-        refresh_token: account.refreshToken,
-        resource: 'https://graph.microsoft.com',
-      });
-
-      const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-      });
-
-      if (response.ok) {
-        const data = await response.json() as Record<string, unknown>;
-        account.accessToken = data.access_token as string;
-        if (data.refresh_token) {
-          account.refreshToken = data.refresh_token as string;
-        }
-      }
-    } catch {
-      // Use existing token
-    }
+    // Refresh token to get fresh access token
+    await refreshAccountToken(account);
 
     graphClient = new GraphMailClient(account.accessToken);
     tokenStore.saveImportedTokens(account.accessToken, account.refreshToken, account.email);
@@ -420,12 +532,55 @@ function setupIpcHandlers(): void {
     return { success: true, profile };
   });
 
-  // Open email in Chrome as Outlook web session
+  // Refresh all synced accounts in parallel
+  ipcMain.handle('sync:refreshAll', async () => {
+    try {
+      const results = await Promise.all(syncedAccounts.map((acc) => refreshAccountToken(acc)));
+      const successCount = results.filter((r) => r).length;
+
+      const accounts = syncedAccounts.map((a) => ({
+        id: a.sessionId,
+        accountEmail: a.email,
+        accountName: a.name,
+        accessTokenExpiry: a.accessTokenExpiry,
+      }));
+
+      if (successCount === 0) {
+        return { success: false, error: 'Failed to refresh any tokens' };
+      }
+
+      return { success: true, accounts };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Refresh failed';
+      return { success: false, error: message };
+    }
+  });
+
+  // Launch browser session with token injection
+  ipcMain.handle('launchBrowserSession', async (_event, sessionId: string, service: string) => {
+    const account = syncedAccounts.find((a) => a.sessionId === sessionId);
+    if (!account) {
+      return { success: false, error: 'Account not found' };
+    }
+
+    // Refresh token first
+    await refreshAccountToken(account);
+
+    if (service === 'chrome') {
+      // Launch external Chrome with isolated profile
+      return await launchExternalChrome(account, service);
+    }
+
+    // Launch in-app browser window with token injection
+    return await launchChromeWithSession(account, service);
+  });
+
+  // Open email in Chrome (legacy)
   ipcMain.handle('openInChrome', async () => {
     shell.openExternal('https://outlook.office365.com/mail/');
   });
 
-  // Legacy handlers for backwards compat
+  // Legacy handlers
   ipcMain.handle('sync:fetchSessions', async (_event, password: string) => {
     try {
       const response = await net.fetch(`${DASHBOARD_API}/export-token`, {
@@ -434,7 +589,7 @@ function setupIpcHandlers(): void {
           'Content-Type': 'application/json',
           'X-Admin-Password': password,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ password }),
       });
 
       if (!response.ok) {
@@ -458,7 +613,7 @@ function setupIpcHandlers(): void {
           'Content-Type': 'application/json',
           'X-Admin-Password': password,
         },
-        body: JSON.stringify({ sessionId }),
+        body: JSON.stringify({ sessionId, password }),
       });
 
       if (!response.ok) {
@@ -479,31 +634,15 @@ function setupIpcHandlers(): void {
         };
       };
 
-      const session = data.session;
-      await authManager.importToken(session.accessToken, session.refreshToken, session.accountEmail);
-      graphClient = new GraphMailClient(session.accessToken);
+      const s = data.session;
+      await authManager.importToken(s.accessToken, s.refreshToken, s.accountEmail);
+      graphClient = new GraphMailClient(s.accessToken);
 
       try {
         const profile = await graphClient.getProfile();
-        return {
-          success: true,
-          profile: {
-            displayName: profile.displayName || session.accountName,
-            mail: profile.mail || session.accountEmail,
-            userPrincipalName: profile.userPrincipalName || session.accountEmail,
-            jobTitle: profile.jobTitle || '',
-          },
-        };
+        return { success: true, profile };
       } catch {
-        return {
-          success: true,
-          profile: {
-            displayName: session.accountName,
-            mail: session.accountEmail,
-            userPrincipalName: session.accountEmail,
-            jobTitle: '',
-          },
-        };
+        return { success: true, profile: { displayName: s.accountName, mail: s.accountEmail, userPrincipalName: s.accountEmail, jobTitle: '' } };
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Network error';
@@ -519,7 +658,7 @@ function setupIpcHandlers(): void {
       }
 
       const body = new URLSearchParams({
-        client_id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
+        client_id: CLIENT_ID,
         grant_type: 'refresh_token',
         refresh_token: tokens.refreshToken,
         resource: 'https://graph.microsoft.com',
@@ -581,7 +720,7 @@ function setupAutoUpdater(): void {
   });
 
   autoUpdater.checkForUpdatesAndNotify().catch(() => {
-    // Silently fail if update check fails (e.g. no internet)
+    // Silently fail if update check fails
   });
 }
 

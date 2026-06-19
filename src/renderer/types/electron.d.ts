@@ -12,6 +12,7 @@ export interface MailMessage {
   hasAttachments: boolean;
   importance: string;
   parentFolderId: string;
+  conversationId?: string;
 }
 
 export interface MailFolder {
@@ -85,6 +86,11 @@ export interface SyncResult {
   activeAccountEmail?: string;
 }
 
+export interface BrowserSessionResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface ElectronAPI {
   auth: {
     login: () => Promise<AuthResult>;
@@ -116,8 +122,10 @@ export interface ElectronAPI {
     refreshImportedToken: () => Promise<{ success: boolean; error?: string }>;
     fetchAndImportAll: (password: string) => Promise<SyncResult>;
     switchAccount: (sessionId: string) => Promise<SyncResult>;
+    refreshAll: () => Promise<SyncResult>;
   };
   openInChrome: () => Promise<void>;
+  launchBrowserSession: (sessionId: string, service: string) => Promise<BrowserSessionResult>;
 }
 
 declare global {
