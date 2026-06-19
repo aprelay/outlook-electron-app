@@ -1,6 +1,6 @@
 {
   "name": "outlook-electron-app",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "An Outlook-inspired desktop email client built with Electron, React, and Microsoft Graph API",
   "main": "dist/main/main.js",
   "scripts": {

