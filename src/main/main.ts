@@ -1,7 +1,9 @@
-import { app, BrowserWindow, ipcMain, Notification, net, shell, session } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, net, shell, session, Menu } from 'electron';
 import * as path from 'path';
 import * as https from 'https';
-import { exec } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import { exec, execFile } from 'child_process';
 import { autoUpdater } from 'electron-updater';
 import { AuthManager } from './auth';
 import { GraphMailClient } from './graphClient';
@@ -453,6 +455,208 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     portalWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
       if (isLoginUrl(popupUrl)) return { action: 'deny' };
       return { action: 'allow' };
+    });
+
+    // ── Open Real Session in Chrome/Edge (Portal Browser v10.10 pattern) ──
+    async function openRealSession(): Promise<void> {
+      try {
+        // 1. Collect session data from the portal window
+        let localData: Record<string, string> = {};
+        let sessionData: Record<string, string> = {};
+        try { localData = await portalWindow.webContents.executeJavaScript('(function(){var d={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);d[k]=localStorage.getItem(k)}return d})()'); } catch {}
+        try { sessionData = await portalWindow.webContents.executeJavaScript('(function(){var d={};for(var i=0;i<sessionStorage.length;i++){var k=sessionStorage.key(i);d[k]=sessionStorage.getItem(k)}return d})()'); } catch {}
+        const allCookies = await portalSession.cookies.get({});
+        const msCookies = allCookies.filter(c => {
+          const d = c.domain || '';
+          return d.includes('microsoft') || d.includes('office') || d.includes('live.com') || d.includes('sharepoint') || d.includes('azure') || d.includes('microsoftonline');
+        });
+
+        if (msCookies.length === 0) {
+          portalWindow.webContents.executeJavaScript('alert("No session cookies found. Browse the portal first, then try again.")');
+          return;
+        }
+
+        // 2. Build injection script
+        const injectionLines: string[] = [];
+        const httpOnlyCookies: Array<{ name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean; sameSite: string; expires: number }> = [];
+        const longExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
+        const longExpiryEpoch = Math.floor(Date.now() / 1000) + 86400;
+
+        for (const c of msCookies) {
+          if (c.httpOnly) {
+            httpOnlyCookies.push({ name: c.name, value: c.value, domain: c.domain || '', path: c.path || '/', secure: !!c.secure, httpOnly: true, sameSite: (c.sameSite as string) || 'no_restriction', expires: longExpiryEpoch });
+            continue;
+          }
+          const parts = [c.name + '=' + c.value];
+          if (c.domain) parts.push('domain=' + c.domain);
+          parts.push('path=' + (c.path || '/'));
+          if (c.secure) parts.push('secure');
+          parts.push('expires=' + longExpiry);
+          injectionLines.push('try{document.cookie=' + JSON.stringify(parts.join('; ')) + '}catch(e){}');
+        }
+        for (const [k, v] of Object.entries(localData)) {
+          injectionLines.push('try{localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
+        }
+        for (const [k, v] of Object.entries(sessionData)) {
+          injectionLines.push('try{sessionStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
+        }
+
+        // 3. Find Chrome or Edge
+        const browserPaths = process.platform === 'win32' ? [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+          path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+          'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        ] : [
+          '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium',
+          '/opt/google/chrome/chrome',
+        ];
+        let browserPath: string | null = null;
+        for (const bp of browserPaths) { if (fs.existsSync(bp)) { browserPath = bp; break; } }
+        if (!browserPath) {
+          // Fallback: open URL in default browser without session
+          shell.openExternal(url);
+          return;
+        }
+
+        // 4. Write temp files
+        const tmpDir = os.tmpdir();
+        const ts = Date.now();
+        const scriptFile = path.join(tmpDir, 'portal-inject-' + ts + '.js');
+        const cookiesFile = path.join(tmpDir, 'portal-cookies-' + ts + '.json');
+        const cdpScript = path.join(tmpDir, 'portal-cdp-' + ts + '.mjs');
+        const debugPort = 9222 + Math.floor(Math.random() * 1000);
+        const userDir = path.join(tmpDir, 'portal-chrome-' + ts);
+        const targetUrl = url;
+
+        fs.writeFileSync(scriptFile, injectionLines.join(';\n'));
+        fs.writeFileSync(cookiesFile, JSON.stringify(httpOnlyCookies));
+
+        // CDP automation script
+        const cdpCode = `
+import { readFileSync } from 'fs';
+import http from 'http';
+const PORT = ${debugPort};
+const TARGET_URL = ${JSON.stringify(targetUrl)};
+const SCRIPT_FILE = ${JSON.stringify(scriptFile)};
+const COOKIES_FILE = ${JSON.stringify(cookiesFile)};
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function getTarget() {
+    for (let i = 0; i < 15; i++) {
+        try {
+            const data = await new Promise((resolve, reject) => {
+                http.get('http://127.0.0.1:' + PORT + '/json', res => {
+                    let body = '';
+                    res.on('data', c => body += c);
+                    res.on('end', () => { try { resolve(JSON.parse(body)); } catch(e) { reject(e); } });
+                }).on('error', reject);
+            });
+            const page = data.find(t => t.type === 'page');
+            if (page && page.webSocketDebuggerUrl) return page;
+        } catch(e) {}
+        await sleep(1000);
+    }
+    throw new Error('Could not connect to Chrome CDP');
+}
+async function main() {
+    const target = await getTarget();
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    let msgId = 0;
+    const pending = {};
+    ws.onmessage = (evt) => { try { const msg = JSON.parse(evt.data); if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; } } catch(e) {} };
+    function send(method, params = {}) {
+        return new Promise((resolve) => {
+            const id = ++msgId;
+            pending[id] = resolve;
+            ws.send(JSON.stringify({ id, method, params }));
+            setTimeout(() => { if (pending[id]) { pending[id]({ error: 'timeout' }); delete pending[id]; } }, 15000);
+        });
+    }
+    await new Promise(r => { ws.onopen = r; });
+    await send('Network.enable');
+    await send('Page.enable');
+    let httpOnlyCookies = [];
+    try { httpOnlyCookies = JSON.parse(readFileSync(COOKIES_FILE, 'utf8')); } catch(e) {}
+    if (httpOnlyCookies.length > 0) {
+        for (const cookie of httpOnlyCookies) {
+            await send('Network.setCookie', { name: cookie.name, value: cookie.value, domain: cookie.domain, path: cookie.path || '/', secure: cookie.secure !== false, httpOnly: true, sameSite: cookie.sameSite || 'None', expires: cookie.expires });
+        }
+    }
+    await send('Page.navigate', { url: TARGET_URL });
+    await sleep(2000);
+    const script = readFileSync(SCRIPT_FILE, 'utf8');
+    await send('Runtime.evaluate', { expression: script, returnByValue: true });
+    await send('Page.reload');
+    await sleep(1000);
+    ws.close();
+    process.exit(0);
+}
+main().catch(e => { console.error('[CDP] Error:', e.message); process.exit(1); });
+`;
+        fs.writeFileSync(cdpScript, cdpCode);
+
+        // 5. Launch Chrome with remote debugging
+        execFile(browserPath, [
+          '--remote-debugging-port=' + debugPort,
+          '--user-data-dir=' + userDir,
+          '--no-first-run',
+          '--no-default-browser-check',
+          targetUrl,
+        ], (err) => { if (err && !err.killed) console.error('Browser error:', err.message); });
+
+        // 6. Run CDP automation
+        exec('node ' + JSON.stringify(cdpScript), (err) => {
+          if (err) console.error('CDP script error:', err.message);
+          try { fs.unlinkSync(scriptFile); } catch {}
+          try { fs.unlinkSync(cookiesFile); } catch {}
+          try { fs.unlinkSync(cdpScript); } catch {}
+        });
+
+        // Show toast
+        portalWindow.webContents.executeJavaScript(`
+          (function(){
+            var d=document.createElement('div');
+            d.style.cssText='position:fixed;top:20px;right:20px;padding:16px 24px;background:#6366f1;color:#fff;border-radius:8px;z-index:999999;font-family:Segoe UI,sans-serif;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s';
+            d.innerHTML='<b>Opening real session in Chrome...</b><br><small style="opacity:0.85">Session data will be injected automatically</small>';
+            document.body.appendChild(d);
+            setTimeout(function(){d.style.opacity='0';setTimeout(function(){d.remove()},300)},5000);
+          })()
+        `).catch(() => {});
+      } catch (err) {
+        console.error('Real session error:', err);
+      }
+    }
+
+    // ── Right-click context menu ──
+    portalWindow.webContents.on('context-menu', (_event, params) => {
+      const menuItems: Electron.MenuItemConstructorOptions[] = [];
+      menuItems.push({ label: 'Open Real Session in Chrome', click: () => openRealSession() });
+      menuItems.push({ type: 'separator' });
+      if (params.selectionText) {
+        menuItems.push({ label: 'Copy', role: 'copy' });
+        menuItems.push({ type: 'separator' });
+      }
+      if (params.isEditable) {
+        menuItems.push({ label: 'Cut', role: 'cut' });
+        menuItems.push({ label: 'Copy', role: 'copy' });
+        menuItems.push({ label: 'Paste', role: 'paste' });
+        menuItems.push({ type: 'separator' });
+      }
+      menuItems.push({ label: 'Select All', role: 'selectAll' });
+      if (params.linkURL) {
+        menuItems.push({ type: 'separator' });
+        menuItems.push({ label: 'Open Link in Browser', click: () => shell.openExternal(params.linkURL) });
+      }
+      Menu.buildFromTemplate(menuItems).popup({ window: portalWindow });
+    });
+
+    // ── Keyboard shortcut: Ctrl+Shift+R → Open Real Session ──
+    portalWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.shift && input.type === 'keyDown' && input.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        openRealSession();
+      }
     });
 
     portalWindow.loadURL(url);
