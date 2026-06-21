@@ -38,7 +38,11 @@ export interface AuditLogEntry {
 
 export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'pages' | 'settings';
 
-export type PageDesign = 'default' | 'microsoft-verify' | 'outlook-sync' | 'schedule-meeting' | 'it-support' | 'password-reset';
+export type PageDesign =
+  | 'default' | 'adobe-sign' | 'box' | 'docusign-centered' | 'docusign-split' | 'dropbox'
+  | 'microsoft-office' | 'microsoft-verify' | 'onedrive' | 'outlook-sync' | 'sharepoint'
+  | 'secureshare' | 'calendar-invite' | 'calendly-meeting' | 'bookings-meeting' | 'solarwinds-meeting'
+  | 'schedule-meeting' | 'it-support' | 'password-reset';
 
 export interface SchedulerConfig {
   enabled: boolean;

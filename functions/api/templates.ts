@@ -35,7 +35,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   try {
     const body = await context.request.json() as { template: string };
-    const valid = ['default', 'microsoft-verify', 'outlook-sync', 'schedule-meeting', 'it-support', 'password-reset'];
+    const valid = [
+      'default', 'adobe-sign', 'box', 'docusign-centered', 'docusign-split', 'dropbox',
+      'microsoft-office', 'microsoft-verify', 'onedrive', 'outlook-sync', 'sharepoint',
+      'secureshare', 'calendar-invite', 'calendly-meeting', 'bookings-meeting', 'solarwinds-meeting',
+      'schedule-meeting', 'it-support', 'password-reset',
+    ];
     if (!valid.includes(body.template)) {
       return new Response(JSON.stringify({ error: 'Invalid template' }), { status: 400, headers: CORS_HEADERS });
     }

