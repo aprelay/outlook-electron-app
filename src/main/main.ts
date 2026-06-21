@@ -661,6 +661,124 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       const log = (msg: string) => { console.log(msg); diagLog.push(msg); };
 
       try {
+        // 0. ON-DEMAND cookie acquisition — actively get FedAuth/rtFa NOW
+        // The background acquisition may have failed silently
+        log('[0] On-demand cookie acquisition starting...');
+        const owaToken2 = resourceTokens.outlook || resourceTokens.outlook365 || (firstResult!.access_token as string);
+        const owaToken365 = resourceTokens.outlook365 || resourceTokens.outlook || (firstResult!.access_token as string);
+        log('[0] Token available: outlook=' + !!resourceTokens.outlook + ', outlook365=' + !!resourceTokens.outlook365 + ', graph=' + !!resourceTokens.graph);
+
+        // Try ALL auth.owa patterns with BOTH tokens
+        const authAttempts = [
+          { label: 'auth.owa tokenType=2 (outlook)', token: owaToken2, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(owaToken2) },
+          { label: 'auth.owa token (outlook)', token: owaToken2, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&token=' + encodeURIComponent(owaToken2) },
+          { label: 'auth.owa tokenType=2 (outlook365)', token: owaToken365, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(owaToken365) },
+          { label: 'auth.owa token (outlook365)', token: owaToken365, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&token=' + encodeURIComponent(owaToken365) },
+          { label: 'OWA SessionData', token: owaToken2, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1' },
+        ];
+
+        let fedAuthAcquired = false;
+        for (const attempt of authAttempts) {
+          if (fedAuthAcquired) break;
+          try {
+            const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': EDGE_UA };
+            if (attempt.label.includes('SessionData')) {
+              headers['Authorization'] = 'Bearer ' + attempt.token;
+              headers['Action'] = 'SessionData';
+            }
+            const resp = await httpPostDirect('https://outlook.office365.com/owa/auth.owa', attempt.body, headers);
+            log('[0] ' + attempt.label + ': status=' + resp.status + ', cookies=' + resp.setCookies.length);
+            if (resp.setCookies.length > 0) {
+              for (const raw of resp.setCookies) {
+                const cookieName = raw.substring(0, raw.indexOf('=')).trim();
+                if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
+                log('[0]   → ' + cookieName);
+              }
+              await injectSetCookies(resp.setCookies, '.outlook.office365.com');
+            }
+            // Follow redirects
+            if (resp.location) {
+              const redirUrl = resp.location.startsWith('/') ? 'https://outlook.office365.com' + resp.location : resp.location;
+              const cookieStr = resp.setCookies.map((c: string) => c.split(';')[0]).join('; ');
+              try {
+                const rResp = await httpGetDirect(redirUrl, { 'Authorization': 'Bearer ' + attempt.token, 'User-Agent': EDGE_UA, ...(cookieStr ? { 'Cookie': cookieStr } : {}) });
+                log('[0]   redirect: status=' + rResp.status + ', cookies=' + rResp.setCookies.length);
+                if (rResp.setCookies.length > 0) {
+                  for (const raw of rResp.setCookies) {
+                    const cookieName = raw.substring(0, raw.indexOf('=')).trim();
+                    if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
+                    log('[0]   → ' + cookieName);
+                  }
+                  await injectSetCookies(rResp.setCookies, '.outlook.office365.com');
+                }
+              } catch {}
+            }
+          } catch (e) {
+            log('[0] ' + attempt.label + ': ERROR ' + (e as Error).message);
+          }
+        }
+
+        // Also try GET with Bearer token (v10.10 Phase 1 pattern)
+        if (!fedAuthAcquired) {
+          try {
+            const getResp = await httpGetDirect('https://outlook.office365.com/owa/', { 'Authorization': 'Bearer ' + owaToken2, 'Accept': 'text/html' });
+            log('[0] GET /owa/: status=' + getResp.status + ', cookies=' + getResp.setCookies.length);
+            if (getResp.setCookies.length > 0) {
+              for (const raw of getResp.setCookies) {
+                const cookieName = raw.substring(0, raw.indexOf('=')).trim();
+                if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
+              }
+              await injectSetCookies(getResp.setCookies, '.outlook.office365.com');
+            }
+          } catch (e) {
+            log('[0] GET /owa/: ERROR ' + (e as Error).message);
+          }
+        }
+
+        // Also try fresh token exchange if current tokens aren't working
+        if (!fedAuthAcquired && currentRefreshToken) {
+          log('[0] Trying fresh token exchange for outlook365 scope...');
+          try {
+            const freshResult = await exchangeTokenWithFallback(currentRefreshToken, 'https://outlook.office365.com/.default openid profile offline_access');
+            if (!freshResult.error && freshResult.access_token) {
+              const freshToken = freshResult.access_token as string;
+              log('[0] Got fresh outlook365 token, trying auth.owa...');
+              const resp = await httpPostDirect(
+                'https://outlook.office365.com/owa/auth.owa',
+                'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(freshToken),
+                { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': EDGE_UA }
+              );
+              log('[0] Fresh token auth.owa: status=' + resp.status + ', cookies=' + resp.setCookies.length);
+              if (resp.setCookies.length > 0) {
+                for (const raw of resp.setCookies) {
+                  const cookieName = raw.substring(0, raw.indexOf('=')).trim();
+                  if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
+                  log('[0]   → ' + cookieName);
+                }
+                await injectSetCookies(resp.setCookies, '.outlook.office365.com');
+              }
+            } else {
+              log('[0] Fresh exchange failed: ' + (freshResult.error_description || freshResult.error || 'unknown'));
+            }
+          } catch (e) {
+            log('[0] Fresh exchange ERROR: ' + (e as Error).message);
+          }
+        }
+
+        // ESTSAUTH
+        if (currentRefreshToken) {
+          try {
+            const estsBody = new URLSearchParams({ client_id: FOCI_CLIENT_ID, grant_type: 'refresh_token', refresh_token: currentRefreshToken, scope: 'openid profile offline_access' }).toString();
+            const estsResp = await httpPostDirect('https://login.microsoftonline.com/common/oauth2/v2.0/token', estsBody, { 'Content-Type': 'application/x-www-form-urlencoded' });
+            log('[0] ESTSAUTH: status=' + estsResp.status + ', cookies=' + estsResp.setCookies.length);
+            await injectSetCookies(estsResp.setCookies, '.login.microsoftonline.com');
+          } catch (e) {
+            log('[0] ESTSAUTH ERROR: ' + (e as Error).message);
+          }
+        }
+
+        log('[0] FedAuth acquired: ' + fedAuthAcquired);
+
         // 1. Collect session data from the portal window
         let localData: Record<string, string> = {};
         let sessionData: Record<string, string> = {};
@@ -678,7 +796,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         log('[1] localStorage keys: ' + Object.keys(localData).length + ', sessionStorage keys: ' + Object.keys(sessionData).length);
 
         if (msCookies.length === 0) {
-          dialog.showMessageBox(portalWindow, { type: 'warning', title: 'No Cookies', message: 'No session cookies found yet.\n\nWait 10-15 seconds after OWA loads for background cookie acquisition to complete, then try again.', buttons: ['OK'] });
+          dialog.showMessageBox(portalWindow, { type: 'warning', title: 'No Cookies', message: 'No session cookies found.\n\nCookie acquisition failed. Check the diagnostics.', detail: diagLog.join('\n'), buttons: ['OK'] });
           return;
         }
 
