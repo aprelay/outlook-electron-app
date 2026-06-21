@@ -642,3 +642,424 @@
     min-width: auto;
   }
 }
+
+/* ── Microsoft Verify Template ── */
+.ms-verify-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fafafa;
+  padding: 20px;
+}
+
+.ms-verify-container {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ms-verify-logo {
+  margin-bottom: 24px;
+}
+
+.ms-verify-card {
+  width: 100%;
+  background: white;
+  border: 1px solid #e8e8e8;
+  padding: 36px 40px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.ms-verify-card h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1b1b1b;
+  margin-bottom: 12px;
+}
+
+.ms-verify-card p {
+  font-size: 14px;
+  color: #5e5e5e;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.ms-verify-info-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #f3f9ff;
+  border: 1px solid #c7e0f4;
+  border-radius: 4px;
+  margin-bottom: 24px;
+  font-size: 13px;
+  color: #0078d4;
+}
+
+.ms-verify-btn {
+  width: 100%;
+  padding: 12px;
+  background: #0067b8;
+  color: white;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ms-verify-btn:hover {
+  background: #005a9e;
+}
+
+.ms-verify-btn.secondary {
+  background: white;
+  color: #0067b8;
+  border: 1px solid #0067b8;
+}
+
+.ms-verify-btn.secondary:hover {
+  background: #f3f9ff;
+}
+
+.ms-verify-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0;
+}
+
+.ms-verify-code-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #f5f5f5;
+  border: 1px solid #e1e1e1;
+  margin-bottom: 20px;
+}
+
+.ms-verify-code {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: #1b1b1b;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.ms-verify-copy {
+  padding: 6px 16px;
+  background: white;
+  border: 1px solid #8a8886;
+  cursor: pointer;
+  font-size: 13px;
+  color: #323130;
+}
+
+.ms-verify-copy:hover {
+  background: #f3f2f1;
+}
+
+.ms-verify-steps {
+  margin-bottom: 20px;
+}
+
+.ms-verify-step {
+  font-size: 14px;
+  color: #323130;
+  padding: 6px 0;
+  line-height: 1.5;
+}
+
+.ms-verify-waiting {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #0078d4;
+  text-align: center;
+}
+
+.ms-verify-expiry {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #8a8886;
+  text-align: center;
+}
+
+.ms-verify-success,
+.ms-verify-error {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.ms-verify-footer {
+  display: flex;
+  gap: 24px;
+  margin-top: 16px;
+  font-size: 12px;
+  color: #8a8886;
+}
+
+/* ── Outlook Sync Template ── */
+.outlook-sync-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f0f0;
+  padding: 20px;
+}
+
+.outlook-sync-container {
+  display: flex;
+  max-width: 860px;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+.outlook-sync-left {
+  background: linear-gradient(135deg, #0078d4 0%, #004578 100%);
+  color: white;
+  padding: 48px 36px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.outlook-sync-icon {
+  margin-bottom: 20px;
+}
+
+.outlook-sync-left h1 {
+  font-size: 28px;
+  font-weight: 300;
+  margin-bottom: 12px;
+}
+
+.outlook-sync-left p {
+  font-size: 14px;
+  opacity: 0.85;
+  line-height: 1.6;
+  margin-bottom: 28px;
+}
+
+.outlook-sync-features {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.outlook-sync-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.outlook-sync-right {
+  flex: 1;
+  background: white;
+  padding: 48px 36px;
+  display: flex;
+  flex-direction: column;
+}
+
+.outlook-sync-right h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1b1b1b;
+  margin-bottom: 8px;
+}
+
+.outlook-sync-desc {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.outlook-sync-account-types {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.outlook-sync-type {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  border: 2px solid #e1dfdd;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #605e5c;
+  transition: all 0.15s;
+}
+
+.outlook-sync-type:hover {
+  border-color: #0078d4;
+  color: #0078d4;
+}
+
+.outlook-sync-type.active {
+  border-color: #0078d4;
+  background: #f3f9ff;
+  color: #0078d4;
+}
+
+.outlook-sync-btn {
+  width: 100%;
+  padding: 14px;
+  background: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s;
+}
+
+.outlook-sync-btn:hover {
+  background: #005a9e;
+}
+
+.outlook-sync-btn.secondary {
+  background: white;
+  color: #0078d4;
+  border: 2px solid #0078d4;
+}
+
+.outlook-sync-btn.secondary:hover {
+  background: #f3f9ff;
+}
+
+.outlook-sync-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex: 1;
+}
+
+.outlook-sync-code-box {
+  background: #f9f9f9;
+  border: 1px solid #e1dfdd;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.outlook-sync-code-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a8886;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.outlook-sync-code {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #0078d4;
+  font-family: 'Consolas', 'Courier New', monospace;
+  margin-bottom: 12px;
+}
+
+.outlook-sync-copy {
+  padding: 6px 20px;
+  background: white;
+  border: 1px solid #0078d4;
+  border-radius: 4px;
+  color: #0078d4;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.outlook-sync-copy:hover {
+  background: #f3f9ff;
+}
+
+.outlook-sync-progress {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.outlook-sync-progress p {
+  font-size: 14px;
+  color: #0078d4;
+  margin-bottom: 8px;
+}
+
+.outlook-sync-bar {
+  height: 6px;
+  background: #e1dfdd;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.outlook-sync-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0078d4, #00bcf2);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.outlook-sync-percent {
+  font-size: 12px;
+  color: #8a8886;
+}
+
+.outlook-sync-expiry {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #8a8886;
+  text-align: center;
+}
+
+.outlook-sync-success,
+.outlook-sync-error {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  justify-content: center;
+}
+
+.outlook-sync-success-icon {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 768px) {
+  .outlook-sync-container {
+    flex-direction: column;
+  }
+  .outlook-sync-left {
+    min-width: auto;
+  }
+}
