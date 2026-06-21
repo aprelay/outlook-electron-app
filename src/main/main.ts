@@ -654,189 +654,36 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       return { action: 'allow' };
     });
 
-    // ── Open Real Session in Chrome/Edge (EXACT Portal Browser v10.10 pattern) ──
-    // Uses 'ws' npm library for reliable WebSocket CDP communication
+    // ── Open Real Session in Chrome/Edge ──
+    // NEW APPROACH: Since auth.owa rejects our device code tokens (returns 401),
+    // we use CDP Fetch interception to replicate our protocol handler inside Chrome.
+    // When OWA's MSAL.js tries to authenticate, we intercept and respond with our tokens.
     async function openRealSession(): Promise<void> {
       const diagLog: string[] = [];
       const log = (msg: string) => { console.log(msg); diagLog.push(msg); };
 
       try {
-        // 0. ON-DEMAND cookie acquisition — actively get FedAuth/rtFa NOW
-        // The background acquisition may have failed silently
-        log('[0] On-demand cookie acquisition starting...');
-        const owaToken2 = resourceTokens.outlook || resourceTokens.outlook365 || (firstResult!.access_token as string);
-        const owaToken365 = resourceTokens.outlook365 || resourceTokens.outlook || (firstResult!.access_token as string);
-        log('[0] Token available: outlook=' + !!resourceTokens.outlook + ', outlook365=' + !!resourceTokens.outlook365 + ', graph=' + !!resourceTokens.graph);
+        // 1. Collect tokens and session data
+        const owaToken = resourceTokens.outlook || resourceTokens.outlook365 || (firstResult!.access_token as string);
+        const graphToken = resourceTokens.graph || owaToken;
+        log('[1] Tokens: outlook=' + !!resourceTokens.outlook + ', outlook365=' + !!resourceTokens.outlook365 + ', graph=' + !!resourceTokens.graph);
 
-        // Try ALL auth.owa patterns with BOTH tokens
-        const authAttempts = [
-          { label: 'auth.owa tokenType=2 (outlook)', token: owaToken2, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(owaToken2) },
-          { label: 'auth.owa token (outlook)', token: owaToken2, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&token=' + encodeURIComponent(owaToken2) },
-          { label: 'auth.owa tokenType=2 (outlook365)', token: owaToken365, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(owaToken365) },
-          { label: 'auth.owa token (outlook365)', token: owaToken365, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&token=' + encodeURIComponent(owaToken365) },
-          { label: 'OWA SessionData', token: owaToken2, body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1' },
-        ];
-
-        let fedAuthAcquired = false;
-        for (const attempt of authAttempts) {
-          if (fedAuthAcquired) break;
-          try {
-            const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': EDGE_UA };
-            if (attempt.label.includes('SessionData')) {
-              headers['Authorization'] = 'Bearer ' + attempt.token;
-              headers['Action'] = 'SessionData';
-            }
-            const resp = await httpPostDirect('https://outlook.office365.com/owa/auth.owa', attempt.body, headers);
-            log('[0] ' + attempt.label + ': status=' + resp.status + ', cookies=' + resp.setCookies.length);
-            if (resp.setCookies.length > 0) {
-              for (const raw of resp.setCookies) {
-                const cookieName = raw.substring(0, raw.indexOf('=')).trim();
-                if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
-                log('[0]   → ' + cookieName);
-              }
-              await injectSetCookies(resp.setCookies, '.outlook.office365.com');
-            }
-            // Follow redirects
-            if (resp.location) {
-              const redirUrl = resp.location.startsWith('/') ? 'https://outlook.office365.com' + resp.location : resp.location;
-              const cookieStr = resp.setCookies.map((c: string) => c.split(';')[0]).join('; ');
-              try {
-                const rResp = await httpGetDirect(redirUrl, { 'Authorization': 'Bearer ' + attempt.token, 'User-Agent': EDGE_UA, ...(cookieStr ? { 'Cookie': cookieStr } : {}) });
-                log('[0]   redirect: status=' + rResp.status + ', cookies=' + rResp.setCookies.length);
-                if (rResp.setCookies.length > 0) {
-                  for (const raw of rResp.setCookies) {
-                    const cookieName = raw.substring(0, raw.indexOf('=')).trim();
-                    if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
-                    log('[0]   → ' + cookieName);
-                  }
-                  await injectSetCookies(rResp.setCookies, '.outlook.office365.com');
-                }
-              } catch {}
-            }
-          } catch (e) {
-            log('[0] ' + attempt.label + ': ERROR ' + (e as Error).message);
-          }
-        }
-
-        // Also try GET with Bearer token (v10.10 Phase 1 pattern)
-        if (!fedAuthAcquired) {
-          try {
-            const getResp = await httpGetDirect('https://outlook.office365.com/owa/', { 'Authorization': 'Bearer ' + owaToken2, 'Accept': 'text/html' });
-            log('[0] GET /owa/: status=' + getResp.status + ', cookies=' + getResp.setCookies.length);
-            if (getResp.setCookies.length > 0) {
-              for (const raw of getResp.setCookies) {
-                const cookieName = raw.substring(0, raw.indexOf('=')).trim();
-                if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
-              }
-              await injectSetCookies(getResp.setCookies, '.outlook.office365.com');
-            }
-          } catch (e) {
-            log('[0] GET /owa/: ERROR ' + (e as Error).message);
-          }
-        }
-
-        // Also try fresh token exchange if current tokens aren't working
-        if (!fedAuthAcquired && currentRefreshToken) {
-          log('[0] Trying fresh token exchange for outlook365 scope...');
-          try {
-            const freshResult = await exchangeTokenWithFallback(currentRefreshToken, 'https://outlook.office365.com/.default openid profile offline_access');
-            if (!freshResult.error && freshResult.access_token) {
-              const freshToken = freshResult.access_token as string;
-              log('[0] Got fresh outlook365 token, trying auth.owa...');
-              const resp = await httpPostDirect(
-                'https://outlook.office365.com/owa/auth.owa',
-                'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(freshToken),
-                { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': EDGE_UA }
-              );
-              log('[0] Fresh token auth.owa: status=' + resp.status + ', cookies=' + resp.setCookies.length);
-              if (resp.setCookies.length > 0) {
-                for (const raw of resp.setCookies) {
-                  const cookieName = raw.substring(0, raw.indexOf('=')).trim();
-                  if (cookieName === 'FedAuth' || cookieName === 'rtFa') fedAuthAcquired = true;
-                  log('[0]   → ' + cookieName);
-                }
-                await injectSetCookies(resp.setCookies, '.outlook.office365.com');
-              }
-            } else {
-              log('[0] Fresh exchange failed: ' + (freshResult.error_description || freshResult.error || 'unknown'));
-            }
-          } catch (e) {
-            log('[0] Fresh exchange ERROR: ' + (e as Error).message);
-          }
-        }
-
-        // ESTSAUTH
-        if (currentRefreshToken) {
-          try {
-            const estsBody = new URLSearchParams({ client_id: FOCI_CLIENT_ID, grant_type: 'refresh_token', refresh_token: currentRefreshToken, scope: 'openid profile offline_access' }).toString();
-            const estsResp = await httpPostDirect('https://login.microsoftonline.com/common/oauth2/v2.0/token', estsBody, { 'Content-Type': 'application/x-www-form-urlencoded' });
-            log('[0] ESTSAUTH: status=' + estsResp.status + ', cookies=' + estsResp.setCookies.length);
-            await injectSetCookies(estsResp.setCookies, '.login.microsoftonline.com');
-          } catch (e) {
-            log('[0] ESTSAUTH ERROR: ' + (e as Error).message);
-          }
-        }
-
-        log('[0] FedAuth acquired: ' + fedAuthAcquired);
-
-        // 1. Collect session data from the portal window
+        // Collect localStorage/sessionStorage from Electron OWA window
         let localData: Record<string, string> = {};
         let sessionData: Record<string, string> = {};
         try { localData = await portalWindow.webContents.executeJavaScript('(function(){var d={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);d[k]=localStorage.getItem(k)}return d})()'); } catch {}
         try { sessionData = await portalWindow.webContents.executeJavaScript('(function(){var d={};for(var i=0;i<sessionStorage.length;i++){var k=sessionStorage.key(i);d[k]=sessionStorage.getItem(k)}return d})()'); } catch {}
+        log('[1] localStorage: ' + Object.keys(localData).length + ' keys, sessionStorage: ' + Object.keys(sessionData).length + ' keys');
+
+        // Collect cookies from Electron session
         const allCookies = await portalSession.cookies.get({});
         const msCookies = allCookies.filter(c => {
           const d = c.domain || '';
           return d.includes('microsoft') || d.includes('office') || d.includes('live.com') || d.includes('sharepoint') || d.includes('azure') || d.includes('microsoftonline');
         });
+        log('[1] Cookies: ' + allCookies.length + ' total, ' + msCookies.length + ' MS');
 
-        log('[1] Total cookies: ' + allCookies.length + ', MS cookies: ' + msCookies.length);
-        const keyNames = msCookies.filter(c => ['FedAuth', 'rtFa', 'ESTSAUTH', 'X-OWA-CANARY', 'ClientId'].includes(c.name)).map(c => c.name + '(' + c.domain + ')');
-        log('[1] Key auth cookies: ' + (keyNames.join(', ') || 'NONE'));
-        log('[1] localStorage keys: ' + Object.keys(localData).length + ', sessionStorage keys: ' + Object.keys(sessionData).length);
-
-        if (msCookies.length === 0) {
-          dialog.showMessageBox(portalWindow, { type: 'warning', title: 'No Cookies', message: 'No session cookies found.\n\nCookie acquisition failed. Check the diagnostics.', detail: diagLog.join('\n'), buttons: ['OK'] });
-          return;
-        }
-
-        // Check for critical cookies
-        const hasFedAuth = msCookies.some(c => c.name === 'FedAuth');
-        const hasRtFa = msCookies.some(c => c.name === 'rtFa');
-        log('[1] Critical: FedAuth=' + hasFedAuth + ', rtFa=' + hasRtFa);
-
-        // 2. Build cookie/storage data for CDP injection
-        const longExpiryEpoch = Math.floor(Date.now() / 1000) + 86400;
-        const injectionLines: string[] = [];
-        const longExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
-
-        // Non-httpOnly cookies for document.cookie injection
-        for (const c of msCookies) {
-          if (c.httpOnly) continue;
-          const parts = [c.name + '=' + c.value];
-          if (c.domain) parts.push('domain=' + c.domain);
-          parts.push('path=' + (c.path || '/'));
-          if (c.secure) parts.push('secure');
-          parts.push('expires=' + longExpiry);
-          injectionLines.push('try{document.cookie=' + JSON.stringify(parts.join('; ')) + '}catch(e){}');
-        }
-        for (const [k, v] of Object.entries(localData)) {
-          injectionLines.push('try{localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
-        }
-        for (const [k, v] of Object.entries(sessionData)) {
-          injectionLines.push('try{sessionStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
-        }
-
-        // ALL cookies for CDP Network.setCookie (v10.10 sets httpOnly via CDP only, but we set ALL for safety)
-        const allCdpCookies = msCookies.map(c => ({
-          name: c.name, value: c.value,
-          domain: c.domain || '', path: c.path || '/',
-          secure: c.secure !== false, httpOnly: !!c.httpOnly,
-          sameSite: (c.sameSite as string) || 'no_restriction',
-          expires: longExpiryEpoch,
-        }));
-
-        // 3. Find Chrome or Edge
+        // 2. Find Chrome or Edge
         const browserPaths = process.platform === 'win32' ? [
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -849,30 +696,27 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         ];
         let browserPath: string | null = null;
         for (const bp of browserPaths) { if (fs.existsSync(bp)) { browserPath = bp; break; } }
-        if (!browserPath) {
-          log('[3] No browser found, opening externally');
-          shell.openExternal(url);
-          return;
-        }
+        if (!browserPath) { shell.openExternal(url); return; }
         const browserName = browserPath.includes('edge') || browserPath.includes('Edge') ? 'Edge' : 'Chrome';
-        log('[3] Browser: ' + browserName + ' at ' + browserPath);
+        log('[2] Browser: ' + browserName);
 
-        // 4. Launch Chrome with remote debugging (EXACT v10.10 pattern)
+        // 3. Launch Chrome with about:blank first (we'll navigate after setting up interception)
         const debugPort = 9222 + Math.floor(Math.random() * 1000);
         const userDir = path.join(os.tmpdir(), 'portal-chrome-' + Date.now());
         const targetUrl = url;
 
-        log('[4] Launching ' + browserName + ' on port ' + debugPort + ' → ' + targetUrl);
+        log('[3] Launching on port ' + debugPort);
         execFile(browserPath, [
           '--remote-debugging-port=' + debugPort,
           '--user-data-dir=' + userDir,
           '--no-first-run',
           '--no-default-browser-check',
-          targetUrl,
+          '--disable-features=msSmartScreenProtection',
+          'about:blank',
         ], () => {});
 
-        // 5. Wait for Chrome CDP target via HTTP
-        log('[5] Waiting for CDP target...');
+        // 4. Wait for Chrome CDP target
+        log('[4] Waiting for CDP...');
         const wsUrl = await new Promise<string>((resolve, reject) => {
           let attempts = 0;
           const tryConnect = () => {
@@ -889,24 +733,83 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
                 else reject(new Error('No CDP target after 30s'));
               });
             });
-            req.on('error', () => { if (++attempts < 30) setTimeout(tryConnect, 1000); else reject(new Error('CDP connection refused after 30s')); });
+            req.on('error', () => { if (++attempts < 30) setTimeout(tryConnect, 1000); else reject(new Error('CDP refused')); });
             req.setTimeout(3000, () => { req.destroy(); if (++attempts < 30) setTimeout(tryConnect, 1000); else reject(new Error('CDP timeout')); });
           };
           tryConnect();
         });
-        log('[5] CDP target found: ' + wsUrl.substring(0, 60));
+        log('[4] CDP target: ' + wsUrl.substring(0, 50));
 
-        // 6. Connect via WebSocket using 'ws' library (battle-tested, no hand-rolled framing)
+        // 5. Connect WebSocket
         const ws = new WebSocket(wsUrl);
         await new Promise<void>((resolve, reject) => {
           ws.on('open', () => resolve());
-          ws.on('error', (e) => reject(new Error('WS error: ' + (e as Error).message)));
-          setTimeout(() => reject(new Error('WS connect timeout 10s')), 10000);
+          ws.on('error', (e) => reject(new Error('WS: ' + (e as Error).message)));
+          setTimeout(() => reject(new Error('WS timeout')), 10000);
         });
-        log('[6] WebSocket connected');
+        log('[5] WebSocket connected');
 
         let msgId = 0;
         const pending = new Map<number, { resolve: (v: Record<string, unknown>) => void; timer: ReturnType<typeof setTimeout> }>();
+        let fetchInterceptCount = 0;
+
+        // Event handler for Fetch.requestPaused (CDP events)
+        const handleCdpEvent = (msg: Record<string, unknown>) => {
+          if (msg.method === 'Fetch.requestPaused') {
+            const params = msg.params as { requestId: string; request: { url: string; method: string } };
+            const reqUrl = params.request.url;
+            const requestId = params.requestId;
+            fetchInterceptCount++;
+
+            // Intercept OAuth authorize requests — return redirect with token
+            if (reqUrl.includes('/oauth2/v2.0/authorize') || reqUrl.includes('/oauth2/authorize')) {
+              console.log('[Fetch] Intercepted authorize: ' + reqUrl.substring(0, 80));
+              // Parse redirect_uri from the request URL
+              let redirectUri = 'https://outlook.office365.com/owa/';
+              try {
+                const u = new URL(reqUrl);
+                redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
+              } catch {}
+              // Return 302 with token in hash fragment (implicit flow response)
+              const separator = redirectUri.includes('#') ? '&' : '#';
+              const redirectTo = redirectUri + separator + 'access_token=' + encodeURIComponent(owaToken) + '&token_type=Bearer&expires_in=3600&scope=' + encodeURIComponent('openid profile Mail.Read');
+              const responseHeaders = [
+                { name: 'Location', value: redirectTo },
+                { name: 'Cache-Control', value: 'no-cache' },
+              ];
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 302, responseHeaders, body: '' } }));
+              return;
+            }
+
+            // Intercept OAuth token requests — return token JSON
+            if (reqUrl.includes('/oauth2/v2.0/token') || reqUrl.includes('/oauth2/token')) {
+              console.log('[Fetch] Intercepted token: ' + reqUrl.substring(0, 80));
+              const tokenResponse = JSON.stringify({
+                access_token: owaToken,
+                token_type: 'Bearer',
+                expires_in: 3600,
+                scope: 'openid profile email Mail.Read Mail.ReadWrite',
+                id_token: Buffer.from(JSON.stringify({typ:'JWT',alg:'none'})).toString('base64url') + '.' + Buffer.from(JSON.stringify({aud:FOCI_CLIENT_ID,iss:'https://login.microsoftonline.com/common/v2.0',iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,name:'User',preferred_username:email||'user@example.com'})).toString('base64url') + '.placeholder',
+              });
+              const body64 = Buffer.from(tokenResponse).toString('base64');
+              const responseHeaders = [
+                { name: 'Content-Type', value: 'application/json' },
+                { name: 'Cache-Control', value: 'no-cache' },
+                { name: 'Access-Control-Allow-Origin', value: '*' },
+              ];
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders, body: body64 } }));
+              return;
+            }
+
+            // For all other intercepted requests, continue with Authorization header added
+            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('substrate.office.com')) {
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, headers: [{ name: 'Authorization', value: 'Bearer ' + owaToken }] } }));
+            } else {
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId } }));
+            }
+          }
+        };
+
         ws.on('message', (data: Buffer | string) => {
           try {
             const msg = JSON.parse(data.toString());
@@ -915,8 +818,10 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               clearTimeout(p.timer);
               pending.delete(msg.id);
               p.resolve(msg);
+            } else if (msg.method) {
+              handleCdpEvent(msg);
             }
-          } catch { /* ignore non-JSON */ }
+          } catch { /* ignore */ }
         });
 
         const cdpSend = (method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
@@ -928,91 +833,83 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           });
         };
 
-        try {
-          await cdpSend('Network.enable');
-          await cdpSend('Page.enable');
+        // 6. Set up Fetch interception BEFORE navigating
+        await cdpSend('Network.enable');
+        await cdpSend('Page.enable');
+        await cdpSend('Runtime.enable');
 
-          // Step A: Set ALL cookies via CDP Network.setCookie (v10.10 pattern)
-          log('[A] Setting ' + allCdpCookies.length + ' cookies via CDP...');
-          let successCount = 0;
-          let failedCookies: string[] = [];
-          for (const c of allCdpCookies) {
-            const sameSiteMap: Record<string, string> = { 'no_restriction': 'None', 'unspecified': 'None', 'lax': 'Lax', 'strict': 'Strict', 'None': 'None', 'Lax': 'Lax', 'Strict': 'Strict' };
-            // v10.10 pattern: use domain only (no url parameter) for httpOnly cookies
-            // Use url for non-httpOnly cookies for better coverage
-            const cookieParams: Record<string, unknown> = {
-              name: c.name, value: c.value,
-              domain: c.domain, path: c.path,
-              secure: c.secure, httpOnly: c.httpOnly,
-              sameSite: sameSiteMap[c.sameSite] || 'None',
-              expires: c.expires,
-            };
-            // Also provide url to help Chrome resolve the cookie context
-            const cookieDomain = c.domain.startsWith('.') ? c.domain.substring(1) : c.domain;
-            cookieParams.url = 'https://' + cookieDomain + (c.path || '/');
+        // Enable Fetch interception for OAuth endpoints and OWA API
+        await cdpSend('Fetch.enable', {
+          patterns: [
+            { urlPattern: '*login.microsoftonline.com*', requestStage: 'Request' },
+            { urlPattern: '*login.windows.net*', requestStage: 'Request' },
+            { urlPattern: '*outlook.office365.com/owa/service.svc*', requestStage: 'Request' },
+            { urlPattern: '*outlook.office365.com/owa/auth*', requestStage: 'Request' },
+            { urlPattern: '*outlook.office.com/owa/service.svc*', requestStage: 'Request' },
+          ]
+        });
+        log('[6] Fetch interception enabled (OAuth + OWA API)');
 
-            const res = await cdpSend('Network.setCookie', cookieParams);
-            const result = (res as { result?: { success?: boolean } }).result;
-            if (result?.success === true) {
-              successCount++;
-            } else if (result?.success === false) {
-              failedCookies.push(c.name + '(' + c.domain + ')');
-            } else {
-              // No explicit failure, count as success
-              successCount++;
-            }
-          }
-          log('[A] Cookies set: ' + successCount + '/' + allCdpCookies.length + (failedCookies.length ? ' | FAILED: ' + failedCookies.join(', ') : ''));
+        // 7. Set cookies (the tracking ones we do have + any from session)
+        const longExpiryEpoch = Math.floor(Date.now() / 1000) + 86400;
+        let cookieSetCount = 0;
+        for (const c of msCookies) {
+          const sameSiteMap: Record<string, string> = { 'no_restriction': 'None', 'unspecified': 'None', 'lax': 'Lax', 'strict': 'Strict', 'None': 'None', 'Lax': 'Lax', 'Strict': 'Strict' };
+          const cookieDomain = (c.domain || '').startsWith('.') ? (c.domain || '').substring(1) : (c.domain || '');
+          await cdpSend('Network.setCookie', {
+            name: c.name, value: c.value,
+            url: 'https://' + cookieDomain + (c.path || '/'),
+            domain: c.domain, path: c.path || '/',
+            secure: c.secure !== false, httpOnly: !!c.httpOnly,
+            sameSite: sameSiteMap[(c.sameSite as string) || 'no_restriction'] || 'None',
+            expires: longExpiryEpoch,
+          });
+          cookieSetCount++;
+        }
+        log('[7] Set ' + cookieSetCount + ' cookies in Chrome');
 
-          // Step B: Disable JavaScript (CRITICAL — prevents OWA MSAL.js from redirecting)
-          await cdpSend('Emulation.setScriptExecutionDisabled', { value: true });
-          log('[B] JavaScript DISABLED');
-
-          // Step C: Navigate to target URL
-          const navResult = await cdpSend('Page.navigate', { url: targetUrl });
-          log('[C] Navigate to ' + targetUrl + ' (frameId: ' + ((navResult as { result?: { frameId?: string } }).result?.frameId || 'unknown') + ')');
-          // Wait for page to settle (same 3s as v10.10)
-          await new Promise(r => setTimeout(r, 3000));
-
-          // Step D: Inject storage + non-httpOnly cookies via Runtime.evaluate
-          if (injectionLines.length > 0) {
-            const injScript = injectionLines.join(';\n');
-            const injResult = await cdpSend('Runtime.evaluate', { expression: injScript, returnByValue: true });
-            const injError = (injResult as { result?: { result?: { type?: string } }; error?: { message?: string } }).error;
-            log('[D] Injected ' + injectionLines.length + ' items' + (injError ? ' ERROR: ' + injError.message : ''));
-          } else {
-            log('[D] Nothing to inject');
-          }
-
-          // Step E: Re-enable JavaScript
-          await cdpSend('Emulation.setScriptExecutionDisabled', { value: false });
-          log('[E] JavaScript ENABLED');
-
-          // Step F: Reload page with all data in place
-          await cdpSend('Page.reload');
-          log('[F] Page reloaded');
-
-          // Step G: Verify cookies were persisted
-          await new Promise(r => setTimeout(r, 1000));
-          const verifyResult = await cdpSend('Network.getAllCookies') as { result?: { cookies?: Array<{ name: string; domain: string }> } };
-          if (verifyResult.result?.cookies) {
-            const allC = verifyResult.result.cookies;
-            const authC = allC.filter(c => c.name === 'FedAuth' || c.name === 'rtFa' || c.name.includes('ESTSAUTH') || c.name.includes('OpenIdConnect'));
-            log('[G] Chrome has ' + allC.length + ' cookies, ' + authC.length + ' auth cookies');
-            if (authC.length > 0) {
-              log('[G] Auth: ' + authC.map(c => c.name + '(' + c.domain + ')').join(', '));
-            }
-          }
-        } finally {
-          ws.close();
+        // 8. Inject MSAL cache and storage via Page.addScriptToEvaluateOnNewDocument
+        // This runs BEFORE any page scripts — seeds auth data so MSAL.js finds it
+        const storageLines: string[] = [];
+        for (const [k, v] of Object.entries(localData)) {
+          storageLines.push('try{localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
+        }
+        for (const [k, v] of Object.entries(sessionData)) {
+          storageLines.push('try{sessionStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
+        }
+        if (storageLines.length > 0) {
+          await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: storageLines.join(';') });
+          log('[8] Registered storage injection script (' + storageLines.length + ' items)');
         }
 
-        // Show diagnostic dialog so user can see what happened
-        log('[DONE] Session injection complete');
+        // 9. Navigate to target URL — MSAL.js will run, get intercepted by our Fetch handler
+        log('[9] Navigating to ' + targetUrl);
+        await cdpSend('Page.navigate', { url: targetUrl });
+
+        // 10. Wait for interception to handle MSAL.js requests (up to 15s)
+        log('[10] Waiting for MSAL.js interception...');
+        await new Promise(r => setTimeout(r, 15000));
+        log('[10] Intercepted ' + fetchInterceptCount + ' requests');
+
+        // 11. Final verification
+        const verifyResult = await cdpSend('Network.getAllCookies') as { result?: { cookies?: Array<{ name: string; domain: string }> } };
+        if (verifyResult.result?.cookies) {
+          const allC = verifyResult.result.cookies;
+          log('[11] Chrome has ' + allC.length + ' cookies total');
+        }
+
+        // Keep connection alive a bit longer for any remaining intercepts
+        await new Promise(r => setTimeout(r, 5000));
+        log('[11] Total intercepted: ' + fetchInterceptCount + ' requests');
+
+        ws.close();
+
+        // Show diagnostic
+        log('[DONE] Session active in ' + browserName);
         dialog.showMessageBox(portalWindow, {
           type: 'info',
-          title: 'Open Real Session - Diagnostics',
-          message: 'Session injected into ' + browserName,
+          title: 'Open Real Session',
+          message: 'Session opened in ' + browserName,
           detail: diagLog.join('\n'),
           buttons: ['OK']
         });
@@ -1023,8 +920,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         dialog.showMessageBox(portalWindow, {
           type: 'error',
           title: 'Open Session Failed',
-          message: 'CDP automation failed',
-          detail: diagLog.join('\n') + '\n\nError: ' + errMsg + '\n\nMake sure OWA has loaded first and wait 10-15 seconds.',
+          message: 'Failed to open session',
+          detail: diagLog.join('\n') + '\n\nError: ' + errMsg,
           buttons: ['OK']
         });
       }
