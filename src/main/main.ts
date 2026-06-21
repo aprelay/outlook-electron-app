@@ -888,13 +888,23 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   function isLoginUrl(url){return typeof url==='string'&&(url.includes('login.microsoftonline.com')||url.includes('/logoff')||url.includes('/signout')||url.includes('/logout')||url.includes('oauth2/authorize'))}
 
   // 1. Override fetch — add Bearer token + suppress 401s
+  // CRITICAL: Must handle both string URLs and Request objects without losing existing headers
   var origFetch = window.fetch;
   window.fetch = function(input, init){
     var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
     if(isMsDomain(url)){
-      init = init || {};
-      init.headers = new Headers(init.headers || {});
-      if(!init.headers.has('Authorization')) init.headers.set('Authorization','Bearer '+getToken(url));
+      if(typeof input === 'string'){
+        // String URL — safe to modify init
+        init = init || {};
+        var h = new Headers(init.headers || {});
+        if(!h.has('Authorization')) h.set('Authorization','Bearer '+getToken(url));
+        init = Object.assign({}, init, {headers: h});
+      } else if(input && typeof input === 'object' && input instanceof Request){
+        // Request object — clone it and add our header without losing original headers
+        var existingHeaders = new Headers(input.headers);
+        if(!existingHeaders.has('Authorization')) existingHeaders.set('Authorization','Bearer '+getToken(url));
+        input = new Request(input, {headers: existingHeaders});
+      }
     }
     return origFetch.call(this, input, init).then(function(response){
       if(response.status === 401 && isMsDomain(url)){
@@ -993,16 +1003,32 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         log('[9] Navigating to ' + targetUrl);
         await cdpSend('Page.navigate', { url: targetUrl });
 
-        // 10. Keep CDP alive for 30s to handle OAuth intercepts, then disconnect
-        // The fetch/XHR override continues working after CDP closes
-        log('[10] Waiting for OAuth flow (30s)...');
-        await new Promise(r => setTimeout(r, 30000));
-        log('[10] Intercepted ' + fetchInterceptCount + ' OAuth requests');
+        // 10. Keep CDP alive INDEFINITELY to handle ALL requests (OAuth + API)
+        // The persistent script is a FALLBACK — CDP interception is the primary mechanism
+        log('[10] CDP interception active (persistent)...');
 
-        ws.close();
+        // Wait 10s for initial page load, then show diagnostic
+        await new Promise(r => setTimeout(r, 10000));
+        log('[10] Intercepted ' + fetchInterceptCount + ' requests so far');
+
+        // Keep CDP alive — DO NOT close the WebSocket
+        // Send periodic pings to keep connection alive
+        const cdpPingInterval = setInterval(() => {
+          if (ws.readyState === 1) { // OPEN
+            ws.send(JSON.stringify({ id: ++msgId, method: 'Runtime.evaluate', params: { expression: '1' } }));
+          } else {
+            clearInterval(cdpPingInterval);
+          }
+        }, 15000); // Ping every 15s
+
+        // Close CDP only when Electron window closes
+        portalWindow.on('closed', () => {
+          clearInterval(cdpPingInterval);
+          try { ws.close(); } catch {}
+        });
 
         // Show diagnostic
-        log('[DONE] Session active — Bearer injection will persist in ' + browserName);
+        log('[DONE] Session active — CDP interception will persist until app closes');
         dialog.showMessageBox(portalWindow, {
           type: 'info',
           title: 'Open Real Session',
