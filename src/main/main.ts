@@ -875,8 +875,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         }
         log('[7] Set ' + cookieSetCount + ' cookies');
 
-        // 8. CRITICAL: Inject persistent fetch/XHR override that adds Bearer token
-        // This script runs BEFORE any page JS on EVERY page load (persists after CDP disconnect)
+        // 8. CRITICAL: Inject persistent stability script (from Portal Browser v10.10)
+        // This runs BEFORE any page JS on EVERY page load (persists after CDP disconnect)
+        // Includes: Bearer injection, 401 suppression, redirect blocking, banner hiding
         const persistentScript = `
 (function(){
   var TOKEN = ${JSON.stringify(owaToken)};
@@ -884,7 +885,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','substrate.office.com','graph.microsoft.com','outlook.live.com'];
   function isMsDomain(url){try{var h=new URL(url).hostname;return MS_DOMAINS.some(function(d){return h.includes(d)})}catch(e){return false}}
   function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;return TOKEN}
-  // Override fetch
+  function isLoginUrl(url){return typeof url==='string'&&(url.includes('login.microsoftonline.com')||url.includes('/logoff')||url.includes('/signout')||url.includes('/logout')||url.includes('oauth2/authorize'))}
+
+  // 1. Override fetch — add Bearer token + suppress 401s
   var origFetch = window.fetch;
   window.fetch = function(input, init){
     var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
@@ -893,9 +896,22 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       init.headers = new Headers(init.headers || {});
       if(!init.headers.has('Authorization')) init.headers.set('Authorization','Bearer '+getToken(url));
     }
-    return origFetch.call(this, input, init);
+    return origFetch.call(this, input, init).then(function(response){
+      if(response.status === 401 && isMsDomain(url)){
+        console.warn('[Portal] Suppressed 401 from:',url.substring(0,80));
+        return new Response(JSON.stringify({value:[]}),{status:200,headers:{'content-type':'application/json'}});
+      }
+      return response;
+    }).catch(function(err){
+      if(isMsDomain(url)){
+        console.warn('[Portal] Suppressed fetch error:',err.message);
+        return new Response(JSON.stringify({value:[]}),{status:200,headers:{'content-type':'application/json'}});
+      }
+      throw err;
+    });
   };
-  // Override XMLHttpRequest
+
+  // 2. Override XMLHttpRequest
   var origOpen = XMLHttpRequest.prototype.open;
   var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method,url){
@@ -908,7 +924,58 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     }
     return origSend.apply(this, arguments);
   };
-  console.log('[Portal] Bearer injection active for '+MS_DOMAINS.length+' domains');
+
+  // 3. Block redirects to login URLs (prevents OWA from navigating away)
+  var origAssign = window.location.assign ? window.location.assign.bind(window.location) : null;
+  var origReplace = window.location.replace ? window.location.replace.bind(window.location) : null;
+  window.location.assign = function(url){
+    if(isLoginUrl(url)){console.warn('[Portal] Blocked assign to:',url.substring(0,80));return}
+    if(origAssign) return origAssign(url);
+  };
+  window.location.replace = function(url){
+    if(isLoginUrl(url)){console.warn('[Portal] Blocked replace to:',url.substring(0,80));return}
+    if(origReplace) return origReplace(url);
+  };
+  // Block location.reload — OWA calls this on auth failure
+  window.location.reload = function(){console.warn('[Portal] Blocked page reload')};
+  // Override href setter
+  try{
+    var origHrefDesc = Object.getOwnPropertyDescriptor(window.location.__proto__,'href')||Object.getOwnPropertyDescriptor(window.Location.prototype,'href');
+    if(origHrefDesc && origHrefDesc.set){
+      var origHrefSet = origHrefDesc.set;
+      Object.defineProperty(window.location,'href',{
+        set:function(url){if(isLoginUrl(url)){console.warn('[Portal] Blocked href to:',url.substring(0,80));return}origHrefSet.call(window.location,url)},
+        get:origHrefDesc.get
+      });
+    }
+  }catch(e){}
+
+  // 4. navigator.onLine always true (prevent stale session detection)
+  Object.defineProperty(navigator,'onLine',{get:function(){return true},configurable:true});
+
+  // 5. Suppress OWA telemetry
+  if(window.owaConfig) window.owaConfig.enableTelemetry = false;
+
+  // 6. Hide session-expired banners via MutationObserver
+  setTimeout(function(){
+    if(!document.body) return;
+    var observer = new MutationObserver(function(mutations){
+      mutations.forEach(function(m){
+        m.addedNodes.forEach(function(node){
+          if(node.nodeType===1){
+            var text=node.textContent||'';
+            if((text.includes('session')&&text.includes('expired'))||(text.includes('sign in')&&text.includes('again'))||(text.includes('Something went wrong')&&text.includes('try again'))||(text.includes('need to sign in'))){
+              node.style.display='none';
+              console.warn('[Portal] Hidden session-expired banner');
+            }
+          }
+        });
+      });
+    });
+    observer.observe(document.body,{childList:true,subtree:true});
+  },3000);
+
+  console.log('[Portal] Stability script active: Bearer injection + 401 suppression + redirect blocking + banner hiding');
 })();`;
         // Also inject localStorage/sessionStorage
         const storageLines: string[] = [];
