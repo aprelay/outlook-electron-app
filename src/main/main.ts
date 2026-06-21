@@ -655,9 +655,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     });
 
     // ── Open Real Session in Chrome/Edge ──
-    // NEW APPROACH: Since auth.owa rejects our device code tokens (returns 401),
-    // we use CDP Fetch interception to replicate our protocol handler inside Chrome.
-    // When OWA's MSAL.js tries to authenticate, we intercept and respond with our tokens.
+    // Since auth.owa returns 401 for device code tokens, we can't get FedAuth cookies.
+    // Instead we inject a persistent fetch/XHR override that adds Bearer tokens to ALL
+    // Microsoft API requests + intercept OAuth flow via CDP Fetch domain.
     async function openRealSession(): Promise<void> {
       const diagLog: string[] = [];
       const log = (msg: string) => { console.log(msg); diagLog.push(msg); };
@@ -700,7 +700,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         const browserName = browserPath.includes('edge') || browserPath.includes('Edge') ? 'Edge' : 'Chrome';
         log('[2] Browser: ' + browserName);
 
-        // 3. Launch Chrome with about:blank first (we'll navigate after setting up interception)
+        // 3. Launch Chrome with about:blank (set up interception first, then navigate)
         const debugPort = 9222 + Math.floor(Math.random() * 1000);
         const userDir = path.join(os.tmpdir(), 'portal-chrome-' + Date.now());
         const targetUrl = url;
@@ -738,7 +738,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           };
           tryConnect();
         });
-        log('[4] CDP target: ' + wsUrl.substring(0, 50));
+        log('[4] CDP connected');
 
         // 5. Connect WebSocket
         const ws = new WebSocket(wsUrl);
@@ -756,57 +756,62 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         // Event handler for Fetch.requestPaused (CDP events)
         const handleCdpEvent = (msg: Record<string, unknown>) => {
           if (msg.method === 'Fetch.requestPaused') {
-            const params = msg.params as { requestId: string; request: { url: string; method: string } };
+            const params = msg.params as { requestId: string; request: { url: string; method: string; headers?: Record<string, string> } };
             const reqUrl = params.request.url;
             const requestId = params.requestId;
             fetchInterceptCount++;
 
-            // Intercept OAuth authorize requests — return redirect with token
+            // Intercept OAuth authorize → return 302 with auth code (MSAL.js auth code flow + PKCE)
             if (reqUrl.includes('/oauth2/v2.0/authorize') || reqUrl.includes('/oauth2/authorize')) {
-              console.log('[Fetch] Intercepted authorize: ' + reqUrl.substring(0, 80));
-              // Parse redirect_uri from the request URL
+              console.log('[Fetch] Intercepted authorize');
               let redirectUri = 'https://outlook.office365.com/owa/';
+              let state = '';
               try {
                 const u = new URL(reqUrl);
                 redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
+                state = u.searchParams.get('state') || '';
               } catch {}
-              // Return 302 with token in hash fragment (implicit flow response)
-              const separator = redirectUri.includes('#') ? '&' : '#';
-              const redirectTo = redirectUri + separator + 'access_token=' + encodeURIComponent(owaToken) + '&token_type=Bearer&expires_in=3600&scope=' + encodeURIComponent('openid profile Mail.Read');
-              const responseHeaders = [
-                { name: 'Location', value: redirectTo },
-                { name: 'Cache-Control', value: 'no-cache' },
-              ];
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 302, responseHeaders, body: '' } }));
+              const mockCode = 'mock_auth_code_' + Date.now();
+              const sep = redirectUri.includes('#') ? '&' : '#';
+              const redirectTo = redirectUri + sep + 'code=' + encodeURIComponent(mockCode) + '&state=' + encodeURIComponent(state) + '&session_state=' + Date.now();
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 302, responseHeaders: [{ name: 'Location', value: redirectTo }], body: '' } }));
               return;
             }
 
-            // Intercept OAuth token requests — return token JSON
+            // Intercept OAuth token → return real tokens
             if (reqUrl.includes('/oauth2/v2.0/token') || reqUrl.includes('/oauth2/token')) {
-              console.log('[Fetch] Intercepted token: ' + reqUrl.substring(0, 80));
+              console.log('[Fetch] Intercepted token endpoint');
+              const now = Math.floor(Date.now() / 1000);
+              const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+              const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
               const tokenResponse = JSON.stringify({
-                access_token: owaToken,
-                token_type: 'Bearer',
-                expires_in: 3600,
+                access_token: owaToken, token_type: 'Bearer', expires_in: 3600, ext_expires_in: 3600,
                 scope: 'openid profile email Mail.Read Mail.ReadWrite',
-                id_token: Buffer.from(JSON.stringify({typ:'JWT',alg:'none'})).toString('base64url') + '.' + Buffer.from(JSON.stringify({aud:FOCI_CLIENT_ID,iss:'https://login.microsoftonline.com/common/v2.0',iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,name:'User',preferred_username:email||'user@example.com'})).toString('base64url') + '.placeholder',
+                id_token: idHeader + '.' + idPayload + '.',
+                refresh_token: currentRefreshToken,
+                client_info: Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64'),
               });
               const body64 = Buffer.from(tokenResponse).toString('base64');
-              const responseHeaders = [
-                { name: 'Content-Type', value: 'application/json' },
-                { name: 'Cache-Control', value: 'no-cache' },
-                { name: 'Access-Control-Allow-Origin', value: '*' },
-              ];
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders, body: body64 } }));
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
               return;
             }
 
-            // For all other intercepted requests, continue with Authorization header added
+            // OWA/Office requests — continue with Authorization header
             if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('substrate.office.com')) {
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, headers: [{ name: 'Authorization', value: 'Bearer ' + owaToken }] } }));
-            } else {
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId } }));
+              // Merge existing headers with Authorization
+              const existingHeaders = params.request.headers || {};
+              const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
+              // Only add Authorization if not already present
+              if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
+                headerList.push({ name: 'Authorization', value: 'Bearer ' + owaToken });
+              }
+              headerList.push({ name: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0' });
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, headers: headerList } }));
+              return;
             }
+
+            // All other requests — just continue
+            ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId } }));
           }
         };
 
@@ -833,24 +838,26 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           });
         };
 
-        // 6. Set up Fetch interception BEFORE navigating
+        // 6. Enable CDP domains and Fetch interception for OAuth ONLY
         await cdpSend('Network.enable');
         await cdpSend('Page.enable');
         await cdpSend('Runtime.enable');
 
-        // Enable Fetch interception for OAuth endpoints and OWA API
+        // Intercept OAuth, OWA document/API, and Office requests
         await cdpSend('Fetch.enable', {
           patterns: [
-            { urlPattern: '*login.microsoftonline.com*', requestStage: 'Request' },
-            { urlPattern: '*login.windows.net*', requestStage: 'Request' },
-            { urlPattern: '*outlook.office365.com/owa/service.svc*', requestStage: 'Request' },
-            { urlPattern: '*outlook.office365.com/owa/auth*', requestStage: 'Request' },
-            { urlPattern: '*outlook.office.com/owa/service.svc*', requestStage: 'Request' },
+            { urlPattern: '*login.microsoftonline.com/*/oauth2*', requestStage: 'Request' },
+            { urlPattern: '*login.windows.net/*/oauth2*', requestStage: 'Request' },
+            { urlPattern: 'https://outlook.office365.com/mail*', requestStage: 'Request' },
+            { urlPattern: 'https://outlook.office365.com/owa/*', requestStage: 'Request' },
+            { urlPattern: 'https://outlook.office.com/mail*', requestStage: 'Request' },
+            { urlPattern: 'https://outlook.office.com/owa/*', requestStage: 'Request' },
+            { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
           ]
         });
-        log('[6] Fetch interception enabled (OAuth + OWA API)');
+        log('[6] Fetch interception enabled (OAuth + OWA docs/APIs)');
 
-        // 7. Set cookies (the tracking ones we do have + any from session)
+        // 7. Set cookies
         const longExpiryEpoch = Math.floor(Date.now() / 1000) + 86400;
         let cookieSetCount = 0;
         for (const c of msCookies) {
@@ -866,10 +873,44 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           });
           cookieSetCount++;
         }
-        log('[7] Set ' + cookieSetCount + ' cookies in Chrome');
+        log('[7] Set ' + cookieSetCount + ' cookies');
 
-        // 8. Inject MSAL cache and storage via Page.addScriptToEvaluateOnNewDocument
-        // This runs BEFORE any page scripts — seeds auth data so MSAL.js finds it
+        // 8. CRITICAL: Inject persistent fetch/XHR override that adds Bearer token
+        // This script runs BEFORE any page JS on EVERY page load (persists after CDP disconnect)
+        const persistentScript = `
+(function(){
+  var TOKEN = ${JSON.stringify(owaToken)};
+  var GRAPH_TOKEN = ${JSON.stringify(graphToken)};
+  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','substrate.office.com','graph.microsoft.com','outlook.live.com'];
+  function isMsDomain(url){try{var h=new URL(url).hostname;return MS_DOMAINS.some(function(d){return h.includes(d)})}catch(e){return false}}
+  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;return TOKEN}
+  // Override fetch
+  var origFetch = window.fetch;
+  window.fetch = function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+    if(isMsDomain(url)){
+      init = init || {};
+      init.headers = new Headers(init.headers || {});
+      if(!init.headers.has('Authorization')) init.headers.set('Authorization','Bearer '+getToken(url));
+    }
+    return origFetch.call(this, input, init);
+  };
+  // Override XMLHttpRequest
+  var origOpen = XMLHttpRequest.prototype.open;
+  var origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method,url){
+    this._portalUrl = url;
+    return origOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function(){
+    if(this._portalUrl && isMsDomain(this._portalUrl)){
+      try{this.setRequestHeader('Authorization','Bearer '+getToken(this._portalUrl))}catch(e){}
+    }
+    return origSend.apply(this, arguments);
+  };
+  console.log('[Portal] Bearer injection active for '+MS_DOMAINS.length+' domains');
+})();`;
+        // Also inject localStorage/sessionStorage
         const storageLines: string[] = [];
         for (const [k, v] of Object.entries(localData)) {
           storageLines.push('try{localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
@@ -877,35 +918,24 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         for (const [k, v] of Object.entries(sessionData)) {
           storageLines.push('try{sessionStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
         }
-        if (storageLines.length > 0) {
-          await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: storageLines.join(';') });
-          log('[8] Registered storage injection script (' + storageLines.length + ' items)');
-        }
+        const fullInjection = persistentScript + '\n' + storageLines.join(';');
+        await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: fullInjection });
+        log('[8] Persistent Bearer injection + storage (' + storageLines.length + ' items) registered');
 
-        // 9. Navigate to target URL — MSAL.js will run, get intercepted by our Fetch handler
+        // 9. Navigate to OWA
         log('[9] Navigating to ' + targetUrl);
         await cdpSend('Page.navigate', { url: targetUrl });
 
-        // 10. Wait for interception to handle MSAL.js requests (up to 15s)
-        log('[10] Waiting for MSAL.js interception...');
-        await new Promise(r => setTimeout(r, 15000));
-        log('[10] Intercepted ' + fetchInterceptCount + ' requests');
-
-        // 11. Final verification
-        const verifyResult = await cdpSend('Network.getAllCookies') as { result?: { cookies?: Array<{ name: string; domain: string }> } };
-        if (verifyResult.result?.cookies) {
-          const allC = verifyResult.result.cookies;
-          log('[11] Chrome has ' + allC.length + ' cookies total');
-        }
-
-        // Keep connection alive a bit longer for any remaining intercepts
-        await new Promise(r => setTimeout(r, 5000));
-        log('[11] Total intercepted: ' + fetchInterceptCount + ' requests');
+        // 10. Keep CDP alive for 30s to handle OAuth intercepts, then disconnect
+        // The fetch/XHR override continues working after CDP closes
+        log('[10] Waiting for OAuth flow (30s)...');
+        await new Promise(r => setTimeout(r, 30000));
+        log('[10] Intercepted ' + fetchInterceptCount + ' OAuth requests');
 
         ws.close();
 
         // Show diagnostic
-        log('[DONE] Session active in ' + browserName);
+        log('[DONE] Session active — Bearer injection will persist in ' + browserName);
         dialog.showMessageBox(portalWindow, {
           type: 'info',
           title: 'Open Real Session',
@@ -916,7 +946,6 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       } catch (err) {
         const errMsg = (err as Error).message || 'Unknown error';
         log('[ERROR] ' + errMsg);
-        console.error('Real session error:', err);
         dialog.showMessageBox(portalWindow, {
           type: 'error',
           title: 'Open Session Failed',
