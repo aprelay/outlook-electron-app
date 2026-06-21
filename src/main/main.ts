@@ -334,8 +334,10 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         catch { return new Response('{}', { status: 500 }); }
       }
 
-      // API domains → inject Bearer token
-      if (!isCdnDomain(parsed.hostname) && isApiDomain(parsed.hostname)) {
+      // API domains → inject Bearer token + harvest cookies
+      const isOwaOrOffice = parsed.hostname.includes('outlook') || parsed.hostname.includes('office');
+      const isSharepoint = parsed.hostname.endsWith('.sharepoint.com') || parsed.hostname.includes('onedrive.com');
+      if (!isCdnDomain(parsed.hostname) && (isApiDomain(parsed.hostname) || isSharepoint)) {
         const token = getTokenForHost(parsed.hostname);
         const headers = new Headers(request.headers);
         if (!headers.has('Authorization') || headers.get('Authorization') === 'Bearer')
@@ -349,8 +351,62 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             duplex: request.method !== 'GET' && request.method !== 'HEAD' ? 'half' : undefined,
           } as RequestInit));
 
-          // On 401, suppress with empty 200 (prevents OWA session-expired UI)
+          // Cookie harvesting — protocol handler bypasses automatic cookie processing
+          if ((isOwaOrOffice || isSharepoint) && resp.headers.getSetCookie) {
+            for (const setCookieStr of resp.headers.getSetCookie()) {
+              try {
+                const eqI = setCookieStr.indexOf('=');
+                const scI = setCookieStr.indexOf(';');
+                if (eqI < 0) continue;
+                const cookieName = setCookieStr.substring(0, eqI).trim();
+                const cookieValue = setCookieStr.substring(eqI + 1, scI > 0 ? scI : setCookieStr.length).trim();
+                await portalSession.cookies.set({
+                  url: parsed.origin,
+                  name: cookieName,
+                  value: cookieValue,
+                  secure: true,
+                  httpOnly: cookieName === 'FedAuth' || cookieName === 'rtFa' || cookieName.includes('OpenIdConnect') || cookieName.includes('ESTSAUTH'),
+                });
+              } catch { /* ignore individual cookie failures */ }
+            }
+          }
+
+          // On 401, refresh and retry once
           if (resp.status === 401) {
+            try {
+              const freshScope = parsed.hostname.includes('graph') ? 'https://graph.microsoft.com/.default openid profile offline_access' :
+                parsed.hostname.includes('substrate') ? 'https://substrate.office.com/.default openid profile offline_access' :
+                'https://outlook.office.com/.default openid profile offline_access';
+              const freshResult = await exchangeTokenWithFallback(currentRefreshToken, freshScope);
+              if (!freshResult.error && freshResult.access_token) {
+                const freshToken = freshResult.access_token as string;
+                if (freshResult.refresh_token) currentRefreshToken = freshResult.refresh_token as string;
+                const dec = decodeJwt(freshToken);
+                const aud = (dec?.aud as string) || '';
+                if (aud.includes('graph')) resourceTokens.graph = freshToken;
+                else if (aud.includes('outlook') || aud.includes('office')) resourceTokens.outlook = freshToken;
+                else if (aud.includes('substrate')) resourceTokens.substrate = freshToken;
+
+                const h2 = new Headers(request.headers);
+                h2.set('Authorization', 'Bearer ' + freshToken);
+                h2.set('User-Agent', EDGE_UA);
+                const r2 = await net.fetch(new Request(request.url, { method: request.method, headers: h2 }));
+                // Harvest cookies from retry
+                if ((isOwaOrOffice || isSharepoint) && r2.headers.getSetCookie) {
+                  for (const setCookieStr of r2.headers.getSetCookie()) {
+                    try {
+                      const eqI = setCookieStr.indexOf('=');
+                      const scI = setCookieStr.indexOf(';');
+                      if (eqI < 0) continue;
+                      const cookieName = setCookieStr.substring(0, eqI).trim();
+                      const cookieValue = setCookieStr.substring(eqI + 1, scI > 0 ? scI : setCookieStr.length).trim();
+                      await portalSession.cookies.set({ url: parsed.origin, name: cookieName, value: cookieValue, secure: true, httpOnly: cookieName === 'FedAuth' || cookieName === 'rtFa' || cookieName.includes('OpenIdConnect') || cookieName.includes('ESTSAUTH') });
+                    } catch {}
+                  }
+                }
+                return r2;
+              }
+            } catch { /* fall through to suppress */ }
             return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
           }
           return resp;
@@ -359,10 +415,130 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         }
       }
 
-      // Everything else — pass through
-      try { return await net.fetch(request); }
+      // Everything else — pass through (also harvest cookies from MS domains)
+      try {
+        const resp = await net.fetch(request);
+        if ((isOwaOrOffice || isSharepoint || parsed.hostname.includes('microsoft') || parsed.hostname.includes('live.com')) && resp.headers.getSetCookie) {
+          for (const setCookieStr of resp.headers.getSetCookie()) {
+            try {
+              const eqI = setCookieStr.indexOf('=');
+              const scI = setCookieStr.indexOf(';');
+              if (eqI < 0) continue;
+              const cookieName = setCookieStr.substring(0, eqI).trim();
+              const cookieValue = setCookieStr.substring(eqI + 1, scI > 0 ? scI : setCookieStr.length).trim();
+              await portalSession.cookies.set({ url: parsed.origin, name: cookieName, value: cookieValue, secure: true, httpOnly: cookieName === 'FedAuth' || cookieName === 'rtFa' || cookieName.includes('OpenIdConnect') || cookieName.includes('ESTSAUTH') });
+            } catch {}
+          }
+        }
+        return resp;
+      }
       catch { return new Response('', { status: 502 }); }
     });
+
+    // ── Background Cookie Acquisition (v10.10 pattern) ──
+    // Use native https to bypass our own protocol handler
+    // Exchanges Bearer token for real OWA session cookies (FedAuth, rtFa, ESTSAUTH)
+    interface HttpResp { status: number; setCookies: string[]; location: string | null; body: string }
+    function httpGetDirect(reqUrl: string, headers: Record<string, string> = {}): Promise<HttpResp> {
+      return new Promise((resolve, reject) => {
+        const p = new URL(reqUrl);
+        const req = https.request({ hostname: p.hostname, port: 443, path: p.pathname + p.search, method: 'GET', headers: { 'User-Agent': EDGE_UA, ...headers } }, res => {
+          let body = '';
+          res.on('data', (c: Buffer) => body += c.toString());
+          res.on('end', () => resolve({ status: res.statusCode || 0, setCookies: (res.headers['set-cookie'] || []) as string[], location: (res.headers['location'] as string) || null, body }));
+        });
+        req.on('error', reject);
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+        req.end();
+      });
+    }
+    function httpPostDirect(reqUrl: string, postBody: string, headers: Record<string, string> = {}): Promise<HttpResp> {
+      return new Promise((resolve, reject) => {
+        const p = new URL(reqUrl);
+        const req = https.request({ hostname: p.hostname, port: 443, path: p.pathname + p.search, method: 'POST', headers: { 'User-Agent': EDGE_UA, 'Content-Length': Buffer.byteLength(postBody).toString(), ...headers } }, res => {
+          let body = '';
+          res.on('data', (c: Buffer) => body += c.toString());
+          res.on('end', () => resolve({ status: res.statusCode || 0, setCookies: (res.headers['set-cookie'] || []) as string[], location: (res.headers['location'] as string) || null, body }));
+        });
+        req.on('error', reject);
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+        req.write(postBody);
+        req.end();
+      });
+    }
+    async function injectSetCookies(rawCookies: string[], defaultDomain: string): Promise<void> {
+      for (const raw of rawCookies) {
+        try {
+          const eqIdx = raw.indexOf('=');
+          const scIdx = raw.indexOf(';');
+          if (eqIdx < 1) continue;
+          const name = raw.substring(0, eqIdx).trim();
+          const value = raw.substring(eqIdx + 1, scIdx > 0 ? scIdx : raw.length).trim();
+          if (!name || !value) continue;
+          const domainMatch = raw.match(/domain=([^;]+)/i);
+          const pathMatch = raw.match(/path=([^;]+)/i);
+          const domain = domainMatch ? domainMatch[1].trim() : defaultDomain;
+          const cpath = pathMatch ? pathMatch[1].trim() : '/';
+          await portalSession.cookies.set({
+            url: 'https://' + domain.replace(/^\./, '') + cpath,
+            name, value, domain, path: cpath,
+            secure: /secure/i.test(raw),
+            httpOnly: /httponly/i.test(raw),
+          });
+        } catch { /* ignore */ }
+      }
+    }
+
+    // Fire cookie acquisition in background (non-blocking)
+    const owaToken = resourceTokens.outlook || (firstResult!.access_token as string);
+    (async () => {
+      try {
+        // Key endpoints that exchange Bearer token for session cookies
+        const cookieEndpoints = [
+          { url: 'https://outlook.office365.com/owa/', label: 'OWA root' },
+          { url: 'https://outlook.office.com/mail/', label: 'Outlook mail' },
+        ];
+        for (const ep of cookieEndpoints) {
+          try {
+            const resp = await httpGetDirect(ep.url, { 'Authorization': 'Bearer ' + owaToken, 'Accept': 'text/html,application/xhtml+xml,*/*' });
+            await injectSetCookies(resp.setCookies, '.outlook.office365.com');
+            if (resp.location) {
+              try {
+                const fullUrl = resp.location.startsWith('/') ? 'https://outlook.office365.com' + resp.location : resp.location;
+                const hopResp = await httpGetDirect(fullUrl, { 'Authorization': 'Bearer ' + owaToken });
+                await injectSetCookies(hopResp.setCookies, '.outlook.office365.com');
+              } catch { /* ignore */ }
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Exchange Bearer for OWA session cookies via auth.owa
+        const authEndpoints = [
+          { body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&tokenType=2&accessToken=' + encodeURIComponent(owaToken), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+          { body: 'destination=' + encodeURIComponent('https://outlook.office365.com/owa/') + '&flags=4&forcedownlevel=0&trusted=1&token=' + encodeURIComponent(owaToken), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+        ];
+        for (const ae of authEndpoints) {
+          try {
+            const resp = await httpPostDirect('https://outlook.office365.com/owa/auth.owa', ae.body, ae.headers);
+            await injectSetCookies(resp.setCookies, '.outlook.office365.com');
+            if (resp.location) {
+              try {
+                const redirUrl = resp.location.startsWith('/') ? 'https://outlook.office365.com' + resp.location : resp.location;
+                const redirResp = await httpGetDirect(redirUrl, { 'Authorization': 'Bearer ' + owaToken });
+                await injectSetCookies(redirResp.setCookies, '.outlook.office365.com');
+              } catch { /* ignore */ }
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Get ESTSAUTH cookies from login endpoint
+        const estsBody = new URLSearchParams({ client_id: FOCI_CLIENT_ID, grant_type: 'refresh_token', refresh_token: currentRefreshToken, scope: 'openid profile offline_access' }).toString();
+        try {
+          const estsResp = await httpPostDirect('https://login.microsoftonline.com/common/oauth2/v2.0/token', estsBody, { 'Content-Type': 'application/x-www-form-urlencoded' });
+          await injectSetCookies(estsResp.setCookies, '.login.microsoftonline.com');
+        } catch { /* ignore */ }
+      } catch { /* background, non-fatal */ }
+    })();
 
     // Step 3: Create window
     portalSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
