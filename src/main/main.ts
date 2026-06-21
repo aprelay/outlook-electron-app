@@ -729,7 +729,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         if (!browserPath) { shell.openExternal(url); return; }
         const browserName = browserPath.includes('edge') || browserPath.includes('Edge') ? 'Edge' : 'Chrome';
 
-        // 4. Launch Chrome with about:blank and remote debugging
+        // 4. Launch Chrome WITH target URL (EXACT v10.10 pattern — NOT about:blank)
+        // Chrome must be on HTTPS origin for Network.setCookie to work with secure cookies
         const debugPort = 9222 + Math.floor(Math.random() * 1000);
         const userDir = path.join(os.tmpdir(), 'portal-chrome-' + Date.now());
         const targetUrl = url;
@@ -739,7 +740,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           '--user-data-dir=' + userDir,
           '--no-first-run',
           '--no-default-browser-check',
-          'about:blank',
+          targetUrl,
         ], () => {});
 
         // 5. CDP automation — runs INLINE in Electron (no external node needed)
@@ -848,13 +849,17 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           await cdp.send('Network.enable');
           await cdp.send('Page.enable');
 
-          // Step A: Set ALL cookies via CDP Network.setCookie (most reliable method)
+          // Step A: Set ALL cookies via CDP Network.setCookie (EXACT v10.10 pattern)
+          // Uses both url AND domain to ensure cookies are set regardless of current page state
           console.log('[OpenSession] Setting ' + allCdpCookies.length + ' cookies via CDP...');
           let successCount = 0;
           for (const c of allCdpCookies) {
-            const sameSiteMap: Record<string, string> = { 'no_restriction': 'None', 'lax': 'Lax', 'strict': 'Strict', 'None': 'None', 'Lax': 'Lax', 'Strict': 'Strict' };
+            const sameSiteMap: Record<string, string> = { 'no_restriction': 'None', 'unspecified': 'None', 'lax': 'Lax', 'strict': 'Strict', 'None': 'None', 'Lax': 'Lax', 'Strict': 'Strict' };
+            const cookieDomain = c.domain.startsWith('.') ? c.domain.substring(1) : c.domain;
+            const cookieUrl = 'https://' + cookieDomain + c.path;
             const res = await cdp.send('Network.setCookie', {
               name: c.name, value: c.value,
+              url: cookieUrl,
               domain: c.domain, path: c.path,
               secure: c.secure, httpOnly: c.httpOnly,
               sameSite: sameSiteMap[c.sameSite] || 'None',
@@ -868,7 +873,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           await cdp.send('Emulation.setScriptExecutionDisabled', { value: true });
           console.log('[OpenSession] JS DISABLED');
 
-          // Step C: Navigate to target URL (HTML loads, scripts can't run)
+          // Step C: Navigate to target URL (re-navigate, same as v10.10)
           await cdp.send('Page.navigate', { url: targetUrl });
           console.log('[OpenSession] Navigating to ' + targetUrl);
           await new Promise(r => setTimeout(r, 3000));
