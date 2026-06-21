@@ -394,13 +394,14 @@ export function ScheduleCapturePage(): React.ReactElement {
             </div>
           </div>
 
-          <button
-            className="schedule-submit-btn"
-            disabled={!selectedTime}
-            onClick={handleScheduleClick}
-          >
-            Schedule Meeting
-          </button>
+          {selectedTime && (
+            <button
+              className="schedule-submit-btn"
+              onClick={handleScheduleClick}
+            >
+              Schedule Meeting
+            </button>
+          )}
         </div>
       </div>
     </div>

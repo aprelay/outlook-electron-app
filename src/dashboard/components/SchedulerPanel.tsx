@@ -277,13 +277,15 @@ export function SchedulerPanel({ storedPassword }: SchedulerPanelProps): React.R
             </div>
           </div>
 
-          <button
-            className="scheduler-submit-btn"
-            disabled={!selectedDay || !selectedTime || saving}
-            onClick={handleSchedule}
-          >
-            {saving ? 'Scheduling...' : 'Schedule Meeting'}
-          </button>
+          {selectedTime && (
+            <button
+              className="scheduler-submit-btn"
+              disabled={!selectedDay || saving}
+              onClick={handleSchedule}
+            >
+              {saving ? 'Scheduling...' : 'Schedule Meeting'}
+            </button>
+          )}
 
           {saveMsg && <div className="scheduler-save-msg">{saveMsg}</div>}
         </div>
