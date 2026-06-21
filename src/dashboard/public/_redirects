@@ -1,2 +1,4 @@
 /admin/* /admin/index.html 200
 /admin /admin/ 301
+/schedule/* /index.html 200
+/schedule /index.html 200

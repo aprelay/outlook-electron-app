@@ -12,6 +12,7 @@ const NAV_ITEMS: { view: DashboardView; label: string; icon: string; adminOnly?:
   { view: 'sessions', label: 'Sessions', icon: '🔑' },
   { view: 'emails', label: 'Emails', icon: '📧' },
   { view: 'audit', label: 'Audit Log', icon: '📋' },
+  { view: 'scheduler', label: 'Scheduler', icon: '📅', adminOnly: true },
   { view: 'settings', label: 'Settings', icon: '⚙️', adminOnly: true },
 ];
 

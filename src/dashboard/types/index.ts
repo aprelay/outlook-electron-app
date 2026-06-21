@@ -36,7 +36,18 @@ export interface AuditLogEntry {
   success: boolean;
 }
 
-export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'settings';
+export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'scheduler' | 'settings';
+
+export interface SchedulerConfig {
+  enabled: boolean;
+  title: string;
+  meetingDuration: number;
+  timeSlots: string[];
+  availableDays: number[];
+  timezone: string;
+  selectedDate?: string;
+  selectedTime?: string;
+}
 
 export type AdminRole = 'admin' | 'viewer';
 

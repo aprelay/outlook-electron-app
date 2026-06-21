@@ -5,6 +5,7 @@ import { SessionsPanel } from './SessionsPanel';
 import { AuditPanel } from './AuditPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { EmailsPanel } from './EmailsPanel';
+import { SchedulerPanel } from './SchedulerPanel';
 import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView, AdminRole } from '../types';
 
 function computeMetrics(sessions: TokenSession[], auditLog: AuditLogEntry[]): TokenMetrics {
@@ -319,6 +320,7 @@ export function Dashboard(): React.ReactElement {
             {view === 'sessions' && 'Active Sessions'}
             {view === 'audit' && 'Audit Log'}
             {view === 'emails' && 'Email Access'}
+            {view === 'scheduler' && 'Scheduler'}
             {view === 'settings' && 'Settings'}
           </h1>
           <div className="header-actions">
@@ -384,6 +386,7 @@ export function Dashboard(): React.ReactElement {
                 <EmailsPanel sessions={sessions} storedPassword={storedPassword} />
               )}
               {view === 'audit' && <AuditPanel logs={auditLog} />}
+              {view === 'scheduler' && <SchedulerPanel storedPassword={storedPassword} />}
               {view === 'settings' && <SettingsPanel />}
             </>
           )}
