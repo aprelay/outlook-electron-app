@@ -36,9 +36,9 @@ export interface AuditLogEntry {
   success: boolean;
 }
 
-export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'scheduler' | 'templates' | 'settings';
+export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'pages' | 'settings';
 
-export type CaptureTemplate = 'default' | 'microsoft-verify' | 'outlook-sync';
+export type PageDesign = 'default' | 'microsoft-verify' | 'outlook-sync' | 'schedule-meeting' | 'it-support' | 'password-reset';
 
 export interface SchedulerConfig {
   enabled: boolean;

@@ -1063,3 +1063,489 @@
     min-width: auto;
   }
 }
+
+/* ── IT Support Template ── */
+.it-support-page {
+  min-height: 100vh;
+  background: #f3f2f1;
+  display: flex;
+  flex-direction: column;
+}
+
+.it-support-header {
+  background: #1b1b1b;
+  color: white;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.it-support-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.it-support-ticket {
+  font-size: 12px;
+  opacity: 0.7;
+  font-family: 'Consolas', monospace;
+}
+
+.it-support-container {
+  display: flex;
+  flex: 1;
+}
+
+.it-support-sidebar {
+  width: 240px;
+  background: white;
+  border-right: 1px solid #e1dfdd;
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.it-support-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  font-size: 13px;
+  color: #323130;
+}
+
+.it-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a19f9d;
+}
+
+.it-status-dot.active {
+  background: #107c10;
+}
+
+.it-support-nav {
+  flex: 1;
+  padding: 12px 0;
+}
+
+.it-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  font-size: 14px;
+  color: #605e5c;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+
+.it-nav-item:hover {
+  background: #f3f2f1;
+}
+
+.it-nav-item.active {
+  color: #0078d4;
+  background: #f3f9ff;
+  border-left-color: #0078d4;
+  font-weight: 600;
+}
+
+.it-support-help {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  font-size: 12px;
+  color: #0078d4;
+  cursor: pointer;
+}
+
+.it-support-main {
+  flex: 1;
+  padding: 40px 48px;
+  max-width: 720px;
+}
+
+.it-support-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: #fff4ce;
+  border: 1px solid #f0c800;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8f6800;
+  margin-bottom: 16px;
+}
+
+.it-support-main h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1b1b1b;
+  margin-bottom: 12px;
+}
+
+.it-support-main p {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.7;
+  margin-bottom: 20px;
+}
+
+.it-support-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #6d5800;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.it-support-btn {
+  padding: 12px 32px;
+  background: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.it-support-btn:hover {
+  background: #106ebe;
+}
+
+.it-support-btn.secondary {
+  background: white;
+  color: #0078d4;
+  border: 1px solid #0078d4;
+}
+
+.it-support-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 0;
+}
+
+.it-support-code-box {
+  background: #f9f9f9;
+  border: 1px solid #e1dfdd;
+  border-radius: 4px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.it-support-code-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a8886;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.it-support-code {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #1b1b1b;
+  font-family: 'Consolas', monospace;
+  margin-bottom: 12px;
+}
+
+.it-support-copy {
+  padding: 6px 20px;
+  background: white;
+  border: 1px solid #8a8886;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.it-support-instructions {
+  margin-bottom: 24px;
+}
+
+.it-instruction {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: #323130;
+}
+
+.it-step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #0078d4;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.it-support-waiting {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #0078d4;
+}
+
+.it-support-expiry {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #8a8886;
+}
+
+.it-support-result {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0;
+}
+
+@media (max-width: 768px) {
+  .it-support-sidebar { display: none; }
+  .it-support-main { padding: 24px; }
+}
+
+/* ── Password Reset Template ── */
+.pwd-reset-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+  padding: 20px;
+}
+
+.pwd-reset-container {
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.pwd-reset-logo-bar {
+  margin-bottom: 24px;
+}
+
+.pwd-reset-card {
+  width: 100%;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.pwd-reset-progress-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px;
+  background: #fafafa;
+  border-bottom: 1px solid #e8e8e8;
+  gap: 8px;
+}
+
+.pwd-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #a19f9d;
+}
+
+.pwd-step.active {
+  color: #0078d4;
+  font-weight: 600;
+}
+
+.pwd-step.done {
+  color: #107c10;
+}
+
+.pwd-step-circle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pwd-step.active .pwd-step-circle {
+  background: #0078d4;
+  color: white;
+  border-color: #0078d4;
+}
+
+.pwd-step.done .pwd-step-circle {
+  background: #107c10;
+  color: white;
+  border-color: #107c10;
+}
+
+.pwd-step-line {
+  width: 32px;
+  height: 2px;
+  background: #e1dfdd;
+}
+
+.pwd-reset-content {
+  padding: 32px;
+}
+
+.pwd-reset-content.center {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.pwd-reset-icon {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.pwd-reset-content h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1b1b1b;
+  margin-bottom: 8px;
+}
+
+.pwd-reset-content p {
+  font-size: 14px;
+  color: #605e5c;
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.pwd-reset-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f3f9ff;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #0078d4;
+  margin-bottom: 20px;
+}
+
+.pwd-reset-btn {
+  width: 100%;
+  padding: 12px;
+  background: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pwd-reset-btn:hover {
+  background: #106ebe;
+}
+
+.pwd-reset-btn.secondary {
+  background: white;
+  color: #0078d4;
+  border: 1px solid #0078d4;
+}
+
+.pwd-reset-code-area {
+  text-align: center;
+  padding: 20px;
+  background: #f9f9f9;
+  border: 1px solid #e1dfdd;
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+
+.pwd-reset-code-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a8886;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.pwd-reset-code {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 5px;
+  color: #1b1b1b;
+  font-family: 'Consolas', monospace;
+  margin-bottom: 12px;
+}
+
+.pwd-reset-copy {
+  padding: 6px 18px;
+  background: white;
+  border: 1px solid #8a8886;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.pwd-reset-steps {
+  padding-left: 20px;
+  margin-bottom: 20px;
+}
+
+.pwd-reset-steps li {
+  font-size: 14px;
+  color: #323130;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+.pwd-reset-waiting {
+  font-size: 14px;
+  color: #0078d4;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.pwd-reset-timer {
+  font-size: 13px;
+  color: #8a8886;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.pwd-reset-footer {
+  display: flex;
+  gap: 24px;
+  margin-top: 20px;
+  font-size: 12px;
+  color: #8a8886;
+}
