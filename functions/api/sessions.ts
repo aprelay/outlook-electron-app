@@ -98,6 +98,48 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return new Response(JSON.stringify({ success: true }), { status: 200, headers: CORS_HEADERS });
     }
 
+    if (body.action === 'delete_session') {
+      if (!checkAuth(context.request)) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
+      }
+      const pw = context.request.headers.get('X-Admin-Password');
+      if (pw !== ADMIN_PASSWORD) {
+        return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: CORS_HEADERS });
+      }
+      const sessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as Record<string, unknown>[] | null) ?? [];
+      const updated = sessions.filter((s) => s.id !== body.sessionId);
+      await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify(updated));
+
+      if (body.auditEntry) {
+        const audit = (await context.env.TOKEN_STORE.get(AUDIT_KEY, 'json') as unknown[] | null) ?? [];
+        audit.unshift(body.auditEntry);
+        if (audit.length > 200) audit.length = 200;
+        await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(audit));
+      }
+
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: CORS_HEADERS });
+    }
+
+    if (body.action === 'delete_all') {
+      if (!checkAuth(context.request)) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
+      }
+      const pw = context.request.headers.get('X-Admin-Password');
+      if (pw !== ADMIN_PASSWORD) {
+        return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: CORS_HEADERS });
+      }
+      await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify([]));
+
+      if (body.auditEntry) {
+        const audit = (await context.env.TOKEN_STORE.get(AUDIT_KEY, 'json') as unknown[] | null) ?? [];
+        audit.unshift(body.auditEntry);
+        if (audit.length > 200) audit.length = 200;
+        await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(audit));
+      }
+
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: CORS_HEADERS });
+    }
+
     return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400, headers: CORS_HEADERS });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

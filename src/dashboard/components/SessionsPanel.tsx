@@ -6,6 +6,8 @@ interface SessionsPanelProps {
   sessions: TokenSession[];
   onRevoke: (sessionId: string) => void;
   onRevokeAll: () => void;
+  onDelete: (sessionId: string) => void;
+  onDeleteAll: () => void;
   onRefresh: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
   onRefreshAll: () => Promise<{ refreshed: number; failed: number }>;
   onCheckToken: (sessionId: string) => Promise<{ valid: boolean; reason?: string }>;
@@ -17,6 +19,8 @@ export function SessionsPanel({
   sessions,
   onRevoke,
   onRevokeAll,
+  onDelete,
+  onDeleteAll,
   onRefresh,
   onRefreshAll,
   onCheckToken,
@@ -26,6 +30,8 @@ export function SessionsPanel({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const [confirmRevokeAll, setConfirmRevokeAll] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [filter, setFilter] = useState<'all' | 'active' | 'expired' | 'revoked'>('all');
   const [actionStatus, setActionStatus] = useState<Record<string, string>>({});
   const [refreshingAll, setRefreshingAll] = useState(false);
@@ -101,6 +107,15 @@ export function SessionsPanel({
                 Revoke All Active
               </button>
             </>
+          )}
+          {sessions.length > 0 && adminRole === 'admin' && (
+            <button
+              className="btn-danger"
+              onClick={() => setConfirmDeleteAll(true)}
+              style={{ marginLeft: 8 }}
+            >
+              Delete All
+            </button>
           )}
           {actionStatus._all && (
             <span className="action-status-text">{actionStatus._all}</span>
@@ -228,6 +243,38 @@ export function SessionsPanel({
                       )}
                     </>
                   )}
+                  {adminRole === 'admin' && (
+                    <>
+                      {confirmDelete === session.id ? (
+                        <div className="confirm-inline">
+                          <span>Permanently delete?</span>
+                          <button
+                            className="btn-danger-sm"
+                            onClick={() => {
+                              onDelete(session.id);
+                              setConfirmDelete(null);
+                            }}
+                          >
+                            Confirm Delete
+                          </button>
+                          <button
+                            className="btn-cancel-sm"
+                            onClick={() => setConfirmDelete(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="btn-danger-sm"
+                          onClick={() => setConfirmDelete(session.id)}
+                          style={{ background: '#991b1b' }}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -261,6 +308,32 @@ export function SessionsPanel({
                 }}
               >
                 Revoke All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteAll && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteAll(false)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete All Sessions</h3>
+            <p>
+              This will permanently delete ALL {sessions.length} session(s) from the system.
+              This cannot be undone.
+            </p>
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setConfirmDeleteAll(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn-danger"
+                onClick={() => {
+                  onDeleteAll();
+                  setConfirmDeleteAll(false);
+                }}
+              >
+                Delete All
               </button>
             </div>
           </div>

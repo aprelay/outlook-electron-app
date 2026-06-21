@@ -817,30 +817,49 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           await cdp.send('Network.enable');
           await cdp.send('Page.enable');
 
-          // Set ALL cookies via CDP (httpOnly AND regular — more reliable than document.cookie)
+          // Step A: Set httpOnly cookies via CDP Network.setCookie (CRITICAL — must be before navigation)
+          for (const c of httpOnlyCookies) {
+            const sameSiteMap: Record<string, string> = { 'no_restriction': 'None', 'lax': 'Lax', 'strict': 'Strict' };
+            await cdp.send('Network.setCookie', {
+              name: c.name, value: c.value,
+              domain: c.domain, path: c.path,
+              secure: c.secure, httpOnly: true,
+              sameSite: sameSiteMap[c.sameSite] || 'None',
+              expires: c.expires,
+            });
+          }
+          // Also set ALL cookies (including non-httpOnly) via CDP for safety
           for (const c of msCookies) {
+            if (c.httpOnly) continue; // already handled above
             const sameSiteMap: Record<string, string> = { 'no_restriction': 'None', 'lax': 'Lax', 'strict': 'Strict' };
             await cdp.send('Network.setCookie', {
               name: c.name, value: c.value,
               domain: c.domain || '', path: c.path || '/',
-              secure: c.secure !== false, httpOnly: !!c.httpOnly,
+              secure: c.secure !== false, httpOnly: false,
               sameSite: sameSiteMap[(c.sameSite as string) || ''] || 'None',
               expires: longExpiryEpoch,
             });
           }
 
-          // Navigate to target URL (cookies are now set, so OWA should load authenticated)
+          // Step B: DISABLE JavaScript before navigation (CRITICAL — prevents OWA auth redirect)
+          await cdp.send('Emulation.setScriptExecutionDisabled', { value: true });
+
+          // Step C: Navigate to target URL (HTML loads but JS cannot run → no login redirect)
           await cdp.send('Page.navigate', { url: targetUrl });
           await new Promise(r => setTimeout(r, 3000));
 
-          // Inject localStorage + sessionStorage + non-httpOnly cookies via script
+          // Step D: Inject non-httpOnly cookies + localStorage + sessionStorage via script
           if (injectionLines.length > 0) {
             await cdp.send('Runtime.evaluate', { expression: injectionLines.join(';\n'), returnByValue: true });
           }
 
-          // Reload to apply everything
+          // Step E: Re-enable JavaScript
+          await cdp.send('Emulation.setScriptExecutionDisabled', { value: false });
+
+          // Step F: Reload page — now all cookies + storage are in place, OWA finds valid session
           await cdp.send('Page.reload');
         } finally {
+          await new Promise(r => setTimeout(r, 1000));
           cdp.close();
         }
 

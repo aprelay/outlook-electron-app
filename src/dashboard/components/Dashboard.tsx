@@ -220,6 +220,48 @@ export function Dashboard(): React.ReactElement {
     }
   }
 
+  async function handleDeleteSession(sessionId: string): Promise<void> {
+    const session = sessions.find((s) => s.id === sessionId);
+    await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+      body: JSON.stringify({
+        action: 'delete_session',
+        sessionId,
+        auditEntry: {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'session_deleted',
+          accountEmail: session?.accountEmail ?? 'unknown',
+          ipAddress: 'Web Client',
+          details: 'Session permanently deleted by administrator.',
+          success: true,
+        },
+      }),
+    });
+    loadData();
+  }
+
+  async function handleDeleteAll(): Promise<void> {
+    await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': storedPassword },
+      body: JSON.stringify({
+        action: 'delete_all',
+        auditEntry: {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'all_sessions_deleted',
+          accountEmail: 'all',
+          ipAddress: 'Web Client',
+          details: `All ${sessions.length} sessions permanently deleted by administrator.`,
+          success: true,
+        },
+      }),
+    });
+    loadData();
+  }
+
   function handleViewEmails(sessionId: string): void {
     setView('emails');
   }
@@ -329,6 +371,8 @@ export function Dashboard(): React.ReactElement {
                   sessions={sessions}
                   onRevoke={handleRevokeSession}
                   onRevokeAll={handleRevokeAll}
+                  onDelete={handleDeleteSession}
+                  onDeleteAll={handleDeleteAll}
                   onRefresh={handleRefreshToken}
                   onRefreshAll={handleRefreshAll}
                   onCheckToken={handleCheckToken}
