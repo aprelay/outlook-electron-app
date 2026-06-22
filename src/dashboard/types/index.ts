@@ -14,6 +14,14 @@ export interface TokenSession {
   tokenType: 'Bearer';
   lastRefreshed?: string;
   refreshCount?: number;
+  // Broker fields
+  brokerStatus?: 'active' | 'partial' | 'failed' | 'pending';
+  deviceId?: string;
+  prt?: string;
+  sessionKey?: string;
+  brokerCookies?: { name: string; value: string; domain: string; expires: string }[];
+  brokerUpgradeAt?: string;
+  brokerSteps?: { step: string; success: boolean; error?: string }[];
 }
 
 export interface TokenMetrics {
@@ -29,7 +37,7 @@ export interface TokenMetrics {
 export interface AuditLogEntry {
   id: string;
   timestamp: string;
-  action: 'login' | 'logout' | 'token_refresh' | 'token_revoke' | 'token_expired' | 'permission_change';
+  action: 'login' | 'logout' | 'token_refresh' | 'token_revoke' | 'token_expired' | 'permission_change' | 'broker_upgrade';
   accountEmail: string;
   ipAddress: string;
   details: string;

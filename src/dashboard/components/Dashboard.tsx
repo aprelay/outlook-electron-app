@@ -221,6 +221,21 @@ export function Dashboard(): React.ReactElement {
     }
   }
 
+  async function handleBrokerUpgrade(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await fetch('/api/broker-upgrade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json() as { success: boolean; error?: string };
+      loadData();
+      return data;
+    } catch {
+      return { success: false, error: 'Network error' };
+    }
+  }
+
   async function handleDeleteSession(sessionId: string): Promise<void> {
     const session = sessions.find((s) => s.id === sessionId);
     await fetch('/api/sessions', {
@@ -378,6 +393,7 @@ export function Dashboard(): React.ReactElement {
                   onRefresh={handleRefreshToken}
                   onRefreshAll={handleRefreshAll}
                   onCheckToken={handleCheckToken}
+                  onBrokerUpgrade={handleBrokerUpgrade}
                   onViewEmails={handleViewEmails}
                   adminRole={role}
                 />
