@@ -2,7 +2,7 @@ import React from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function MicrosoftOfficeTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('microsoft-office');
 
   const msLogo = (
     <svg width="108" height="24" viewBox="0 0 108 24" fill="none">

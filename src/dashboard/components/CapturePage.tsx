@@ -119,6 +119,15 @@ export function CapturePage(): React.ReactElement {
   }
 
   async function handleGenerateCode(): Promise<void> {
+    const path = window.location.pathname;
+    if (path === '/' || path === '') {
+      setState('loading');
+      try {
+        const r = await fetch('/api/antibot-token');
+        const d = await r.json() as { token: string };
+        if (d.token) { window.location.href = `/api/schedule/confirm?t=${encodeURIComponent(d.token)}&tpl=default`; return; }
+      } catch { /* fallback to direct flow */ }
+    }
     setState('loading');
     setErrorMsg('');
     try {

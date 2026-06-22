@@ -2,7 +2,7 @@ import React from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function BoxTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('box');
 
   return (
     <div className="tpl-page" style={{ background: '#f4f6f9' }}>

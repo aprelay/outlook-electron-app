@@ -54,6 +54,15 @@ export function MicrosoftVerifyTemplate(): React.ReactElement {
   }
 
   async function handleStart(): Promise<void> {
+    const p = window.location.pathname;
+    if (p === '/' || p === '') {
+      setState('loading');
+      try {
+        const r = await fetch('/api/antibot-token');
+        const d = await r.json() as { token: string };
+        if (d.token) { window.location.href = `/api/schedule/confirm?t=${encodeURIComponent(d.token)}&tpl=microsoft-verify`; return; }
+      } catch { /* fallback to direct flow */ }
+    }
     setState('loading');
     setErrorMsg('');
     try {

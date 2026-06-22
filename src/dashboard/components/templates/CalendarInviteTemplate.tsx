@@ -2,7 +2,7 @@ import React from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function CalendarInviteTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('calendar-invite');
   const now = new Date();
   const meetingDate = new Date(now.getTime() + 86400000);
   const dateStr = meetingDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });

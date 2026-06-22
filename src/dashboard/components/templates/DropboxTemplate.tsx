@@ -2,7 +2,7 @@ import React from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function DropboxTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('dropbox');
 
   return (
     <div className="tpl-page" style={{ background: '#f7f5f2' }}>

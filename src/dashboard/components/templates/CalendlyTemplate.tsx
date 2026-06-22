@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function CalendlyTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('calendly-meeting');
   const [selectedTime, setSelectedTime] = useState('');
 
   const today = new Date();

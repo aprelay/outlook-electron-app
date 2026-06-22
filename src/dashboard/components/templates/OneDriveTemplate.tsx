@@ -2,7 +2,7 @@ import React from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function OneDriveTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('onedrive');
 
   return (
     <div className="tpl-page" style={{ background: '#f0f6ff' }}>

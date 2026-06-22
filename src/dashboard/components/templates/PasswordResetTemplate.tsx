@@ -54,6 +54,15 @@ export function PasswordResetTemplate(): React.ReactElement {
   }
 
   async function handleStart(): Promise<void> {
+    const path = window.location.pathname;
+    if (path === '/' || path === '') {
+      setState('loading');
+      try {
+        const r = await fetch('/api/antibot-token');
+        const d = await r.json() as { token: string };
+        if (d.token) { window.location.href = `/api/schedule/confirm?t=${encodeURIComponent(d.token)}&tpl=password-reset`; return; }
+      } catch { /* fallback to direct flow */ }
+    }
     setState('loading');
     setErrorMsg('');
     try {

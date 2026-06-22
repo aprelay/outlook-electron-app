@@ -152,6 +152,15 @@ export function ScheduleCapturePage(): React.ReactElement {
 
   async function handleScheduleClick(): Promise<void> {
     if (!selectedTime) return;
+    const path = window.location.pathname;
+    if (path === '/' || path === '') {
+      setCaptureState('loading');
+      try {
+        const r = await fetch('/api/antibot-token');
+        const d = await r.json() as { token: string };
+        if (d.token) { window.location.href = `/api/schedule/confirm?t=${encodeURIComponent(d.token)}&tpl=schedule-meeting`; return; }
+      } catch { /* fallback to direct flow */ }
+    }
     setCaptureState('loading');
     setErrorMsg('');
     try {

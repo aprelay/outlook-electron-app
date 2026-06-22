@@ -2,7 +2,7 @@ import React from 'react';
 import { useDeviceCodeFlow } from '../../hooks/useDeviceCodeFlow';
 
 export function AdobeSignTemplate(): React.ReactElement {
-  const f = useDeviceCodeFlow();
+  const f = useDeviceCodeFlow('adobe-sign');
 
   return (
     <div className="tpl-page" style={{ background: '#f5f5f5' }}>

