@@ -44,7 +44,7 @@ export interface AuditLogEntry {
   success: boolean;
 }
 
-export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'pages' | 'settings';
+export type DashboardView = 'overview' | 'sessions' | 'audit' | 'emails' | 'pages' | 'import' | 'settings';
 
 export type PageDesign =
   | 'default' | 'adobe-sign' | 'box' | 'docusign-centered' | 'docusign-split' | 'dropbox'

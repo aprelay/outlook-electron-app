@@ -6,6 +6,7 @@ import { AuditPanel } from './AuditPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { EmailsPanel } from './EmailsPanel';
 import { PagesPanel } from './PagesPanel';
+import { ImportTokenPanel } from './ImportTokenPanel';
 import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView, AdminRole } from '../types';
 
 function computeMetrics(sessions: TokenSession[], auditLog: AuditLogEntry[]): TokenMetrics {
@@ -403,6 +404,7 @@ export function Dashboard(): React.ReactElement {
               )}
               {view === 'audit' && <AuditPanel logs={auditLog} />}
               {view === 'pages' && <PagesPanel storedPassword={storedPassword} />}
+              {view === 'import' && <ImportTokenPanel storedPassword={storedPassword} onImportSuccess={loadData} />}
               {view === 'settings' && <SettingsPanel />}
             </>
           )}

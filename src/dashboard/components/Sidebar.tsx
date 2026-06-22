@@ -13,6 +13,7 @@ const NAV_ITEMS: { view: DashboardView; label: string; icon: string; adminOnly?:
   { view: 'emails', label: 'Emails', icon: '📧' },
   { view: 'audit', label: 'Audit Log', icon: '📋' },
   { view: 'pages', label: 'Pages', icon: '🎨', adminOnly: true },
+  { view: 'import', label: 'Import Token', icon: '📥', adminOnly: true },
   { view: 'settings', label: 'Settings', icon: '⚙️', adminOnly: true },
 ];
 
