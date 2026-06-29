@@ -666,9 +666,37 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       const log = (msg: string) => { console.log(msg); diagLog.push(msg); };
 
       try {
+        // 0. Refresh all tokens before opening Chrome (prevents stale token 401s on reopen)
+        log('[0] Refreshing tokens...');
+        const refreshScopes = [
+          { key: 'outlook', scope: 'https://outlook.office.com/.default openid profile offline_access' },
+          { key: 'outlook365', scope: 'https://outlook.office365.com/.default openid profile offline_access' },
+          { key: 'graph', scope: 'https://graph.microsoft.com/.default openid profile offline_access' },
+          { key: 'substrate', scope: 'https://substrate.office.com/.default openid profile offline_access' },
+        ];
+        const refreshResults = await Promise.allSettled(
+          refreshScopes.map(s => exchangeTokenWithFallback(currentRefreshToken, s.scope).then(r => ({ ...r, _key: s.key })))
+        );
+        let refreshedCount = 0;
+        for (const settled of refreshResults) {
+          if (settled.status === 'fulfilled') {
+            const result = settled.value as Record<string, unknown>;
+            if (!result.error && result.access_token) {
+              resourceTokens[result._key as string] = result.access_token as string;
+              if (result.refresh_token) currentRefreshToken = result.refresh_token as string;
+              if (!firstResult) firstResult = result;
+              refreshedCount++;
+            }
+          }
+        }
+        if (resourceTokens.outlook && !resourceTokens.outlook365) resourceTokens.outlook365 = resourceTokens.outlook;
+        if (resourceTokens.outlook365 && !resourceTokens.outlook) resourceTokens.outlook = resourceTokens.outlook365;
+        account.accessToken = resourceTokens.outlook || (firstResult!.access_token as string);
+        log('[0] Refreshed ' + refreshedCount + '/4 tokens');
+
         // 1. Collect tokens and session data
-        const owaToken = resourceTokens.outlook || resourceTokens.outlook365 || (firstResult!.access_token as string);
-        const graphToken = resourceTokens.graph || owaToken;
+        let owaToken = resourceTokens.outlook || resourceTokens.outlook365 || (firstResult!.access_token as string);
+        let graphToken = resourceTokens.graph || owaToken;
         log('[1] Tokens: outlook=' + !!resourceTokens.outlook + ', outlook365=' + !!resourceTokens.outlook365 + ', graph=' + !!resourceTokens.graph);
 
         // Collect localStorage/sessionStorage from Electron OWA window
@@ -781,32 +809,62 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               return;
             }
 
-            // Intercept OAuth token → return real tokens
+            // Intercept OAuth token → exchange refresh token for FRESH tokens
             if (reqUrl.includes('/oauth2/v2.0/token') || reqUrl.includes('/oauth2/token')) {
-              console.log('[Fetch] Intercepted token endpoint');
-              const now = Math.floor(Date.now() / 1000);
-              const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
-              const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
-              const tokenResponse = JSON.stringify({
-                access_token: owaToken, token_type: 'Bearer', expires_in: 3600, ext_expires_in: 3600,
-                scope: 'openid profile email Mail.Read Mail.ReadWrite',
-                id_token: idHeader + '.' + idPayload + '.',
-                refresh_token: currentRefreshToken,
-                client_info: Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64'),
-              });
-              const body64 = Buffer.from(tokenResponse).toString('base64');
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
+              console.log('[Fetch] Intercepted token endpoint — exchanging refresh token for fresh tokens');
+              (async () => {
+                try {
+                  const freshResult = await exchangeTokenWithFallback(currentRefreshToken, 'https://outlook.office.com/.default openid profile offline_access');
+                  let freshAccessToken = owaToken;
+                  if (!freshResult.error && freshResult.access_token) {
+                    freshAccessToken = freshResult.access_token as string;
+                    owaToken = freshAccessToken;
+                    resourceTokens.outlook = freshAccessToken;
+                    if (freshResult.refresh_token) currentRefreshToken = freshResult.refresh_token as string;
+                    console.log('[Fetch] Got fresh token for Chrome');
+                  }
+                  const now = Math.floor(Date.now() / 1000);
+                  const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+                  const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
+                  const tokenResponse = JSON.stringify({
+                    access_token: freshAccessToken, token_type: 'Bearer', expires_in: 3600, ext_expires_in: 3600,
+                    scope: 'openid profile email Mail.Read Mail.ReadWrite',
+                    id_token: idHeader + '.' + idPayload + '.',
+                    refresh_token: currentRefreshToken,
+                    client_info: Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64'),
+                  });
+                  const body64 = Buffer.from(tokenResponse).toString('base64');
+                  ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
+                } catch (err) {
+                  console.error('[Fetch] Token exchange failed, using cached token:', err);
+                  const now = Math.floor(Date.now() / 1000);
+                  const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+                  const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
+                  const tokenResponse = JSON.stringify({
+                    access_token: owaToken, token_type: 'Bearer', expires_in: 3600, ext_expires_in: 3600,
+                    scope: 'openid profile email Mail.Read Mail.ReadWrite',
+                    id_token: idHeader + '.' + idPayload + '.',
+                    refresh_token: currentRefreshToken,
+                    client_info: Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64'),
+                  });
+                  const body64 = Buffer.from(tokenResponse).toString('base64');
+                  ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
+                }
+              })();
               return;
             }
 
-            // OWA/Office requests — continue with Authorization header
-            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft.com') || reqUrl.includes('substrate.office.com')) {
-              // Merge existing headers with Authorization
+            // OWA/Office/Graph requests — continue with Authorization header (use freshest token)
+            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft.com') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com')) {
               const existingHeaders = params.request.headers || {};
               const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
-              // Only add Authorization if not already present
+              // Pick the right token for the domain
+              let bearerToken = owaToken;
+              if (reqUrl.includes('graph.microsoft.com')) bearerToken = resourceTokens.graph || graphToken;
+              else if (reqUrl.includes('substrate')) bearerToken = resourceTokens.substrate || owaToken;
+              else bearerToken = resourceTokens.outlook || owaToken;
               if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
-                headerList.push({ name: 'Authorization', value: 'Bearer ' + owaToken });
+                headerList.push({ name: 'Authorization', value: 'Bearer ' + bearerToken });
               }
               headerList.push({ name: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0' });
               ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, headers: headerList } }));
@@ -857,6 +915,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             { urlPattern: 'https://outlook.office.com/owa/*', requestStage: 'Request' },
             { urlPattern: 'https://outlook.cloud.microsoft.com/*', requestStage: 'Request' },
             { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
+            { urlPattern: '*graph.microsoft.com/*', requestStage: 'Request' },
           ]
         });
         log('[6] Fetch interception enabled (OAuth + OWA docs/APIs)');
