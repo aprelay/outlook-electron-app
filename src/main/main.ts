@@ -248,6 +248,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     }
 
     // PROTOCOL HANDLER — intercept ALL HTTPS requests
+    // Unregister any existing handler first (fixes "Failed to register protocol: https"
+    // when reopening a service tab after closing it)
+    try { portalSession.protocol.unhandle('https'); } catch { /* no prior handler — ok */ }
     portalSession.protocol.handle('https', async (request) => {
       const parsed = new URL(request.url);
 
