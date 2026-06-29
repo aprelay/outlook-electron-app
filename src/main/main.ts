@@ -56,7 +56,7 @@ function decodeJwt(token: string): Record<string, unknown> | null {
 const MS_DOMAINS = ['microsoft.com', 'microsoftonline.com', 'office.com', 'office365.com', 'azure.com', 'sharepoint.com', 'live.com', 'onedrive.com', 'onenote.com'];
 function isMsDomain(hostname: string): boolean { return MS_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
-const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'outlook.cloud.microsoft.com', 'substrate.office.com', 'graph.microsoft.com', 'admin.microsoft.com', 'portal.office.com', 'www.office.com'];
+const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'outlook.cloud.microsoft.com', 'outlook.cloud.microsoft', 'substrate.office.com', 'graph.microsoft.com', 'admin.microsoft.com', 'portal.office.com', 'www.office.com'];
 function isApiDomain(hostname: string): boolean { return API_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
 const CDN_DOMAINS = ['res.office365.com', 'res.cdn.office.net', 'cdn.office.net', 'akamaized.net', 'msecnd.net', 'aspnetcdn.com', 'office.net', 'shellprod.msocdn.com'];
@@ -710,8 +710,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         const allCookies = await portalSession.cookies.get({});
         const msCookies = allCookies.filter(c => {
           const d = c.domain || '';
-          // Exclude outlook.cloud.microsoft.com cookies — they trigger server-side redirects
-          if (d.includes('outlook.cloud.microsoft.com')) return false;
+          // Exclude outlook.cloud.microsoft cookies — they trigger server-side redirects
+          if (d.includes('outlook.cloud.microsoft')) return false;
           return d.includes('microsoft') || d.includes('office') || d.includes('live.com') || d.includes('sharepoint') || d.includes('azure') || d.includes('microsoftonline');
         });
         log('[1] Cookies: ' + allCookies.length + ' total, ' + msCookies.length + ' MS');
@@ -800,9 +800,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               const statusCode = params.responseStatusCode;
               if (statusCode >= 300 && statusCode < 400 && cloudRedirectBlockCount < 5) {
                 const locationHeader = (params.responseHeaders || []).find(h => h.name.toLowerCase() === 'location');
-                if (locationHeader && locationHeader.value.includes('outlook.cloud.microsoft.com')) {
+                if (locationHeader && locationHeader.value.includes('outlook.cloud.microsoft')) {
                   cloudRedirectBlockCount++;
-                  const newLocation = locationHeader.value.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+                  const newLocation = locationHeader.value.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
                   const newHeaders = (params.responseHeaders || []).map(h => ({
                     name: h.name,
                     value: h.name.toLowerCase() === 'location' ? newLocation : h.value
@@ -829,7 +829,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
                 const u = new URL(reqUrl);
                 redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
                 // Force redirect_uri to use outlook.office365.com (prevents navigation to cloud.microsoft.com)
-                redirectUri = redirectUri.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+                redirectUri = redirectUri.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
                 state = u.searchParams.get('state') || '';
                 responseMode = u.searchParams.get('response_mode') || 'fragment';
               } catch {}
@@ -920,7 +920,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             }
 
             // OWA/Office/Graph requests — continue with Authorization header (use freshest token)
-            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft.com') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com')) {
+            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com')) {
               const existingHeaders = params.request.headers || {};
               const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
               // Pick the right token for the domain
@@ -980,6 +980,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             { urlPattern: 'https://outlook.office.com/mail*', requestStage: 'Request' },
             { urlPattern: 'https://outlook.office.com/owa/*', requestStage: 'Request' },
             { urlPattern: 'https://outlook.cloud.microsoft.com/*', requestStage: 'Request' },
+            { urlPattern: 'https://outlook.cloud.microsoft/*', requestStage: 'Request' },
             { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
             { urlPattern: '*graph.microsoft.com/*', requestStage: 'Request' },
             // Response-stage: catch 302 redirects to outlook.cloud.microsoft.com
@@ -1014,9 +1015,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
 (function(){
   var TOKEN = ${JSON.stringify(owaToken)};
   var GRAPH_TOKEN = ${JSON.stringify(graphToken)};
-  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','substrate.office.com','graph.microsoft.com','outlook.live.com'];
+  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','outlook.cloud.microsoft','substrate.office.com','graph.microsoft.com','outlook.live.com'];
   function isMsDomain(url){try{var h=new URL(url).hostname;return MS_DOMAINS.some(function(d){return h.includes(d)})}catch(e){return false}}
-  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft.com'))return TOKEN;return TOKEN}
+  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft'))return TOKEN;return TOKEN}
   function isLoginUrl(url){return typeof url==='string'&&(url.includes('login.microsoftonline.com')||url.includes('/logoff')||url.includes('/signout')||url.includes('/logout')||url.includes('oauth2/authorize'))}
 
   // 1. Override fetch — add Bearer token + suppress 401s
@@ -1120,9 +1121,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   console.log('[Portal] Stability script active: Bearer injection + 401 suppression + redirect blocking + banner hiding');
 })();`;
         // Also inject localStorage/sessionStorage
-        // Clean storage: replace outlook.cloud.microsoft.com with outlook.office365.com
+        // Clean storage: replace outlook.cloud.microsoft(.com) with outlook.office365.com
         // to prevent OWA from redirecting Chrome to the cloud domain
-        const cleanCloud = (s: string) => s.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+        const cleanCloud = (s: string) => s.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
         const storageLines: string[] = [];
         for (const [k, v] of Object.entries(localData)) {
           const cleanK = cleanCloud(k);
