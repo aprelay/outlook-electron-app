@@ -1454,32 +1454,66 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // Fetch + import all sessions at once from dashboard (single batch request)
+  // Fetch + import all sessions from dashboard
+  // Try batch mode first (single request), fall back to N+1 if API doesn't support batch
   ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
     try {
+      // Try batch mode first (returns all sessions with tokens in one call)
       const batchResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password, batch: true });
 
-      if (batchResp.status !== 200) {
-        const data = JSON.parse(batchResp.body) as { error?: string };
-        return { success: false, error: data.error || 'Invalid password or connection failed' };
+      let hasBatchTokens = false;
+      if (batchResp.status === 200) {
+        const batchData = JSON.parse(batchResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessToken?: string; refreshToken?: string; accessTokenExpiry: string }> };
+        if (batchData.sessions && batchData.sessions.length > 0 && batchData.sessions[0].accessToken) {
+          // Batch mode worked — sessions include tokens
+          hasBatchTokens = true;
+          syncedAccounts.length = 0;
+          for (const sess of batchData.sessions) {
+            syncedAccounts.push({
+              sessionId: sess.id,
+              email: sess.accountEmail,
+              name: sess.accountName,
+              accessToken: sess.accessToken!,
+              refreshToken: sess.refreshToken || '',
+              accessTokenExpiry: sess.accessTokenExpiry,
+            });
+          }
+        }
       }
 
-      const batchData = JSON.parse(batchResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessToken: string; refreshToken: string; accessTokenExpiry: string }> };
+      // Fallback: list sessions then import each individually (v1.0.29 approach)
+      if (!hasBatchTokens) {
+        const listResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password });
 
-      if (!batchData.sessions || batchData.sessions.length === 0) {
-        return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
-      }
+        if (listResp.status !== 200) {
+          const data = JSON.parse(listResp.body) as { error?: string };
+          return { success: false, error: data.error || 'Invalid password or connection failed' };
+        }
 
-      syncedAccounts.length = 0;
-      for (const sess of batchData.sessions) {
-        syncedAccounts.push({
-          sessionId: sess.id,
-          email: sess.accountEmail,
-          name: sess.accountName,
-          accessToken: sess.accessToken,
-          refreshToken: sess.refreshToken,
-          accessTokenExpiry: sess.accessTokenExpiry,
+        const listData = JSON.parse(listResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+
+        if (!listData.sessions || listData.sessions.length === 0) {
+          return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
+        }
+
+        syncedAccounts.length = 0;
+        const importPromises = listData.sessions.map(async (sess) => {
+          const importResp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId: sess.id, password });
+          if (importResp.status === 200) {
+            const importData = JSON.parse(importResp.body) as {
+              session: { id: string; accountEmail: string; accountName: string; accessToken: string; refreshToken: string; accessTokenExpiry: string };
+            };
+            syncedAccounts.push({
+              sessionId: importData.session.id,
+              email: importData.session.accountEmail,
+              name: importData.session.accountName,
+              accessToken: importData.session.accessToken,
+              refreshToken: importData.session.refreshToken,
+              accessTokenExpiry: importData.session.accessTokenExpiry,
+            });
+          }
         });
+        await Promise.all(importPromises);
       }
 
       if (syncedAccounts.length === 0) {
