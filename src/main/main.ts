@@ -792,51 +792,87 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             const requestId = params.requestId;
             fetchInterceptCount++;
 
-            // Intercept OAuth authorize → return 302 with auth code (MSAL.js auth code flow + PKCE)
+            // Intercept OAuth authorize → return 302 with auth code (mirrors protocol handler)
             if (reqUrl.includes('/oauth2/v2.0/authorize') || reqUrl.includes('/oauth2/authorize')) {
               console.log('[Fetch] Intercepted authorize');
               let redirectUri = 'https://outlook.office365.com/owa/';
               let state = '';
+              let responseMode = 'fragment';
               try {
                 const u = new URL(reqUrl);
                 redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
                 state = u.searchParams.get('state') || '';
+                responseMode = u.searchParams.get('response_mode') || 'fragment';
               } catch {}
               const mockCode = 'mock_auth_code_' + Date.now();
-              const sep = redirectUri.includes('#') ? '&' : '#';
-              const redirectTo = redirectUri + sep + 'code=' + encodeURIComponent(mockCode) + '&state=' + encodeURIComponent(state) + '&session_state=' + Date.now();
+              const authParams = new URLSearchParams({ code: mockCode, state, client_info: clientInfo, session_state: Date.now().toString() });
+              const sep = responseMode === 'query' ? '?' : '#';
+              const redirectTo = redirectUri + sep + authParams.toString();
               ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 302, responseHeaders: [{ name: 'Location', value: redirectTo }], body: '' } }));
               return;
             }
 
-            // Intercept OAuth token → exchange refresh token for FRESH tokens
+            // Intercept OAuth token → read client_id+scope from POST body, exchange for correct tokens
             if (reqUrl.includes('/oauth2/v2.0/token') || reqUrl.includes('/oauth2/token')) {
-              console.log('[Fetch] Intercepted token endpoint — exchanging refresh token for fresh tokens');
+              console.log('[Fetch] Intercepted token endpoint');
               (async () => {
                 try {
-                  const freshResult = await exchangeTokenWithFallback(currentRefreshToken, 'https://outlook.office.com/.default openid profile offline_access');
-                  let freshAccessToken = owaToken;
-                  if (!freshResult.error && freshResult.access_token) {
-                    freshAccessToken = freshResult.access_token as string;
-                    owaToken = freshAccessToken;
-                    resourceTokens.outlook = freshAccessToken;
-                    if (freshResult.refresh_token) currentRefreshToken = freshResult.refresh_token as string;
-                    console.log('[Fetch] Got fresh token for Chrome');
+                  // Read client_id and scope from POST body (mirrors protocol handler approach)
+                  let reqClientId = FOCI_CLIENT_ID;
+                  let reqScope = 'https://outlook.office365.com/.default openid profile offline_access';
+                  const postData = (params.request as Record<string, unknown>).postData as string | undefined;
+                  if (postData) {
+                    const bodyParams = new URLSearchParams(postData);
+                    if (bodyParams.get('client_id')) reqClientId = bodyParams.get('client_id')!;
+                    if (bodyParams.get('scope')) reqScope = bodyParams.get('scope')!;
+                    console.log('[Fetch] Token request: client_id=' + reqClientId + ', scope=' + reqScope.substring(0, 60));
                   }
+
+                  // Exchange refresh token using the REQUESTED client_id and scope
+                  const freshResult = await exchangeToken(currentRefreshToken, reqClientId, reqScope);
+                  let tokenResult: Record<string, unknown> = { access_token: owaToken };
+                  if (!freshResult.error && freshResult.access_token) {
+                    tokenResult = freshResult;
+                    const freshToken = freshResult.access_token as string;
+                    // Update cached tokens based on audience
+                    const dec = decodeJwt(freshToken);
+                    const aud = (dec?.aud as string) || '';
+                    if (aud.includes('graph')) { resourceTokens.graph = freshToken; graphToken = freshToken; }
+                    else if (aud.includes('outlook') || aud.includes('office')) { resourceTokens.outlook = freshToken; owaToken = freshToken; }
+                    if (freshResult.refresh_token) currentRefreshToken = freshResult.refresh_token as string;
+                    console.log('[Fetch] Got fresh token (aud=' + aud.substring(0, 40) + ')');
+                  } else {
+                    // Fallback: try with FOCI client_id if the requested one failed
+                    if (reqClientId !== FOCI_CLIENT_ID) {
+                      const fallback = await exchangeToken(currentRefreshToken, FOCI_CLIENT_ID, reqScope);
+                      if (!fallback.error && fallback.access_token) {
+                        tokenResult = fallback;
+                        if (fallback.refresh_token) currentRefreshToken = fallback.refresh_token as string;
+                        console.log('[Fetch] Fallback FOCI exchange succeeded');
+                      }
+                    }
+                  }
+
+                  // Build id_token with aud matching the REQUESTED client_id
                   const now = Math.floor(Date.now() / 1000);
+                  const idClaims = { aud: reqClientId, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
                   const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
-                  const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
+                  const idPayload = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
                   const tokenResponse = JSON.stringify({
-                    access_token: freshAccessToken, token_type: 'Bearer', expires_in: 3600, ext_expires_in: 3600,
-                    scope: 'openid profile email Mail.Read Mail.ReadWrite',
+                    access_token: tokenResult.access_token || owaToken,
+                    token_type: 'Bearer',
+                    expires_in: (tokenResult.expires_in as number) || 3600,
+                    ext_expires_in: 3600,
+                    scope: (tokenResult.scope as string) || reqScope,
                     id_token: idHeader + '.' + idPayload + '.',
-                    refresh_token: currentRefreshToken,
-                    client_info: Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64'),
+                    refresh_token: (tokenResult.refresh_token as string) || currentRefreshToken,
+                    client_info: clientInfo, foci: '1',
                   });
                   const body64 = Buffer.from(tokenResponse).toString('base64');
                   ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
                 } catch (err) {
-                  console.error('[Fetch] Token exchange failed, using cached token:', err);
+                  console.error('[Fetch] Token exchange failed:', err);
+                  // Last resort: return cached token
                   const now = Math.floor(Date.now() / 1000);
                   const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
                   const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
@@ -845,7 +881,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
                     scope: 'openid profile email Mail.Read Mail.ReadWrite',
                     id_token: idHeader + '.' + idPayload + '.',
                     refresh_token: currentRefreshToken,
-                    client_info: Buffer.from(JSON.stringify({ uid: oid, utid: tid })).toString('base64'),
+                    client_info: clientInfo, foci: '1',
                   });
                   const body64 = Buffer.from(tokenResponse).toString('base64');
                   ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
