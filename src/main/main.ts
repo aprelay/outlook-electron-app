@@ -792,6 +792,33 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             const requestId = params.requestId;
             fetchInterceptCount++;
 
+            // CRITICAL: Rewrite outlook.cloud.microsoft.com → outlook.office365.com
+            // Microsoft randomly redirects to outlook.cloud.microsoft.com which rejects our tokens.
+            // outlook.office365.com accepts them (proven working). CDP Fetch.continueRequest(url)
+            // transparently rewrites the URL — the page never knows.
+            if (reqUrl.includes('outlook.cloud.microsoft.com') && !reqUrl.includes('/oauth2/')) {
+              const rewrittenUrl = reqUrl.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+              const existingHeaders = params.request.headers || {};
+              const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
+              // Update Host header to match new URL
+              const hostIdx = headerList.findIndex(h => h.name.toLowerCase() === 'host');
+              if (hostIdx >= 0) headerList[hostIdx].value = 'outlook.office365.com';
+              else headerList.push({ name: 'Host', value: 'outlook.office365.com' });
+              // Update Origin/Referer headers
+              for (const h of headerList) {
+                if (h.name.toLowerCase() === 'origin' || h.name.toLowerCase() === 'referer') {
+                  h.value = h.value.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+                }
+              }
+              // Add Authorization if missing
+              if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
+                headerList.push({ name: 'Authorization', value: 'Bearer ' + (resourceTokens.outlook || owaToken) });
+              }
+              console.log('[Fetch] Rewrite cloud→office365: ' + reqUrl.substring(0, 80));
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, url: rewrittenUrl, headers: headerList } }));
+              return;
+            }
+
             // Intercept OAuth authorize → return 302 with auth code (mirrors protocol handler)
             if (reqUrl.includes('/oauth2/v2.0/authorize') || reqUrl.includes('/oauth2/authorize')) {
               console.log('[Fetch] Intercepted authorize');
