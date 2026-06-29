@@ -706,12 +706,10 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         try { sessionData = await portalWindow.webContents.executeJavaScript('(function(){var d={};for(var i=0;i<sessionStorage.length;i++){var k=sessionStorage.key(i);d[k]=sessionStorage.getItem(k)}return d})()'); } catch {}
         log('[1] localStorage: ' + Object.keys(localData).length + ' keys, sessionStorage: ' + Object.keys(sessionData).length + ' keys');
 
-        // Collect cookies from Electron session
+        // Collect cookies from Electron session (keep ALL — v10.10 approach)
         const allCookies = await portalSession.cookies.get({});
         const msCookies = allCookies.filter(c => {
           const d = c.domain || '';
-          // Exclude outlook.cloud.microsoft cookies — they trigger server-side redirects
-          if (d.includes('outlook.cloud.microsoft')) return false;
           return d.includes('microsoft') || d.includes('office') || d.includes('live.com') || d.includes('sharepoint') || d.includes('azure') || d.includes('microsoftonline');
         });
         log('[1] Cookies: ' + allCookies.length + ' total, ' + msCookies.length + ' MS');
@@ -784,163 +782,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
 
         let msgId = 0;
         const pending = new Map<number, { resolve: (v: Record<string, unknown>) => void; timer: ReturnType<typeof setTimeout> }>();
-        let fetchInterceptCount = 0;
-
-        // Event handler for Fetch.requestPaused (CDP events)
-        let cloudRedirectBlockCount = 0;
-        const handleCdpEvent = (msg: Record<string, unknown>) => {
-          if (msg.method === 'Fetch.requestPaused') {
-            const params = msg.params as { requestId: string; request: { url: string; method: string; headers?: Record<string, string> }; responseStatusCode?: number; responseHeaders?: Array<{ name: string; value: string }> };
-            const reqUrl = params.request.url;
-            const requestId = params.requestId;
-            fetchInterceptCount++;
-
-            // ── Response-stage: block 302 redirects from office365 → cloud.microsoft.com ──
-            if (params.responseStatusCode !== undefined) {
-              const statusCode = params.responseStatusCode;
-              if (statusCode >= 300 && statusCode < 400 && cloudRedirectBlockCount < 5) {
-                const locationHeader = (params.responseHeaders || []).find(h => h.name.toLowerCase() === 'location');
-                if (locationHeader && locationHeader.value.includes('outlook.cloud.microsoft')) {
-                  cloudRedirectBlockCount++;
-                  const newLocation = locationHeader.value.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
-                  const newHeaders = (params.responseHeaders || []).map(h => ({
-                    name: h.name,
-                    value: h.name.toLowerCase() === 'location' ? newLocation : h.value
-                  }));
-                  console.log('[Fetch] Blocked redirect #' + cloudRedirectBlockCount + ' to cloud.microsoft.com → staying at office365.com');
-                  ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: statusCode, responseHeaders: newHeaders, body: '' } }));
-                  return;
-                }
-              }
-              // Not a redirect to cloud.microsoft.com or exceeded limit — continue normally
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueResponse', params: { requestId } }));
-              return;
-            }
-
-            // ── Request-stage handlers below ──
-
-            // Intercept OAuth authorize → return 302 with auth code (mirrors protocol handler)
-            if (reqUrl.includes('/oauth2/v2.0/authorize') || reqUrl.includes('/oauth2/authorize')) {
-              console.log('[Fetch] Intercepted authorize');
-              let redirectUri = 'https://outlook.office365.com/owa/';
-              let state = '';
-              let responseMode = 'fragment';
-              try {
-                const u = new URL(reqUrl);
-                redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
-                // Force redirect_uri to use outlook.office365.com (prevents navigation to cloud.microsoft.com)
-                redirectUri = redirectUri.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
-                state = u.searchParams.get('state') || '';
-                responseMode = u.searchParams.get('response_mode') || 'fragment';
-              } catch {}
-              const mockCode = 'mock_auth_code_' + Date.now();
-              const authParams = new URLSearchParams({ code: mockCode, state, client_info: clientInfo, session_state: Date.now().toString() });
-              const sep = responseMode === 'query' ? '?' : '#';
-              const redirectTo = redirectUri + sep + authParams.toString();
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 302, responseHeaders: [{ name: 'Location', value: redirectTo }], body: '' } }));
-              return;
-            }
-
-            // Intercept OAuth token → read client_id+scope from POST body, exchange for correct tokens
-            if (reqUrl.includes('/oauth2/v2.0/token') || reqUrl.includes('/oauth2/token')) {
-              console.log('[Fetch] Intercepted token endpoint');
-              (async () => {
-                try {
-                  // Read client_id and scope from POST body (mirrors protocol handler approach)
-                  let reqClientId = FOCI_CLIENT_ID;
-                  let reqScope = 'https://outlook.office365.com/.default openid profile offline_access';
-                  const postData = (params.request as Record<string, unknown>).postData as string | undefined;
-                  if (postData) {
-                    const bodyParams = new URLSearchParams(postData);
-                    if (bodyParams.get('client_id')) reqClientId = bodyParams.get('client_id')!;
-                    if (bodyParams.get('scope')) reqScope = bodyParams.get('scope')!;
-                    console.log('[Fetch] Token request: client_id=' + reqClientId + ', scope=' + reqScope.substring(0, 60));
-                  }
-
-                  // Exchange refresh token using the REQUESTED client_id and scope
-                  const freshResult = await exchangeToken(currentRefreshToken, reqClientId, reqScope);
-                  let tokenResult: Record<string, unknown> = { access_token: owaToken };
-                  if (!freshResult.error && freshResult.access_token) {
-                    tokenResult = freshResult;
-                    const freshToken = freshResult.access_token as string;
-                    // Update cached tokens based on audience
-                    const dec = decodeJwt(freshToken);
-                    const aud = (dec?.aud as string) || '';
-                    if (aud.includes('graph')) { resourceTokens.graph = freshToken; graphToken = freshToken; }
-                    else if (aud.includes('outlook') || aud.includes('office')) { resourceTokens.outlook = freshToken; owaToken = freshToken; }
-                    if (freshResult.refresh_token) currentRefreshToken = freshResult.refresh_token as string;
-                    console.log('[Fetch] Got fresh token (aud=' + aud.substring(0, 40) + ')');
-                  } else {
-                    // Fallback: try with FOCI client_id if the requested one failed
-                    if (reqClientId !== FOCI_CLIENT_ID) {
-                      const fallback = await exchangeToken(currentRefreshToken, FOCI_CLIENT_ID, reqScope);
-                      if (!fallback.error && fallback.access_token) {
-                        tokenResult = fallback;
-                        if (fallback.refresh_token) currentRefreshToken = fallback.refresh_token as string;
-                        console.log('[Fetch] Fallback FOCI exchange succeeded');
-                      }
-                    }
-                  }
-
-                  // Build id_token with aud matching the REQUESTED client_id
-                  const now = Math.floor(Date.now() / 1000);
-                  const idClaims = { aud: reqClientId, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
-                  const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
-                  const idPayload = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
-                  const tokenResponse = JSON.stringify({
-                    access_token: tokenResult.access_token || owaToken,
-                    token_type: 'Bearer',
-                    expires_in: (tokenResult.expires_in as number) || 3600,
-                    ext_expires_in: 3600,
-                    scope: (tokenResult.scope as string) || reqScope,
-                    id_token: idHeader + '.' + idPayload + '.',
-                    refresh_token: (tokenResult.refresh_token as string) || currentRefreshToken,
-                    client_info: clientInfo, foci: '1',
-                  });
-                  const body64 = Buffer.from(tokenResponse).toString('base64');
-                  ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
-                } catch (err) {
-                  console.error('[Fetch] Token exchange failed:', err);
-                  // Last resort: return cached token
-                  const now = Math.floor(Date.now() / 1000);
-                  const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
-                  const idPayload = Buffer.from(JSON.stringify({ aud: FOCI_CLIENT_ID, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, ver: '2.0' })).toString('base64url');
-                  const tokenResponse = JSON.stringify({
-                    access_token: owaToken, token_type: 'Bearer', expires_in: 3600, ext_expires_in: 3600,
-                    scope: 'openid profile email Mail.Read Mail.ReadWrite',
-                    id_token: idHeader + '.' + idPayload + '.',
-                    refresh_token: currentRefreshToken,
-                    client_info: clientInfo, foci: '1',
-                  });
-                  const body64 = Buffer.from(tokenResponse).toString('base64');
-                  ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }], body: body64 } }));
-                }
-              })();
-              return;
-            }
-
-            // OWA/Office/Graph requests — continue with Authorization header (use freshest token)
-            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com')) {
-              const existingHeaders = params.request.headers || {};
-              const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
-              // Pick the right token for the domain
-              let bearerToken = owaToken;
-              if (reqUrl.includes('graph.microsoft.com')) bearerToken = resourceTokens.graph || graphToken;
-              else if (reqUrl.includes('substrate')) bearerToken = resourceTokens.substrate || owaToken;
-              else bearerToken = resourceTokens.outlook || owaToken;
-              if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
-                headerList.push({ name: 'Authorization', value: 'Bearer ' + bearerToken });
-              }
-              headerList.push({ name: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0' });
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, headers: headerList } }));
-              return;
-            }
-
-            // All other requests — just continue
-            ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId } }));
-          }
-        };
-
+        // v10.10 approach: simple CDP message handling (no Fetch interception)
         ws.on('message', (data: Buffer | string) => {
           try {
             const msg = JSON.parse(data.toString());
@@ -949,8 +791,6 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               clearTimeout(p.timer);
               pending.delete(msg.id);
               p.resolve(msg);
-            } else if (msg.method) {
-              handleCdpEvent(msg);
             }
           } catch { /* ignore */ }
         });
@@ -964,33 +804,13 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           });
         };
 
-        // 6. Enable CDP domains and Fetch interception for OAuth ONLY
+        // 6. Enable CDP domains (v10.10 approach — NO Fetch interception)
         await cdpSend('Network.enable');
         await cdpSend('Page.enable');
         await cdpSend('Runtime.enable');
+        log('[6] CDP domains enabled');
 
-        // Intercept OAuth, OWA document/API, and Office requests
-        // Response-stage patterns for outlook.office365.com block redirects to cloud.microsoft.com
-        await cdpSend('Fetch.enable', {
-          patterns: [
-            { urlPattern: '*login.microsoftonline.com/*/oauth2*', requestStage: 'Request' },
-            { urlPattern: '*login.windows.net/*/oauth2*', requestStage: 'Request' },
-            { urlPattern: 'https://outlook.office365.com/mail*', requestStage: 'Request' },
-            { urlPattern: 'https://outlook.office365.com/owa/*', requestStage: 'Request' },
-            { urlPattern: 'https://outlook.office.com/mail*', requestStage: 'Request' },
-            { urlPattern: 'https://outlook.office.com/owa/*', requestStage: 'Request' },
-            { urlPattern: 'https://outlook.cloud.microsoft.com/*', requestStage: 'Request' },
-            { urlPattern: 'https://outlook.cloud.microsoft/*', requestStage: 'Request' },
-            { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
-            { urlPattern: '*graph.microsoft.com/*', requestStage: 'Request' },
-            // Response-stage: catch 302 redirects to outlook.cloud.microsoft.com
-            { urlPattern: 'https://outlook.office365.com/*', requestStage: 'Response' },
-            { urlPattern: 'https://outlook.office.com/*', requestStage: 'Response' },
-          ]
-        });
-        log('[6] Fetch interception enabled (OAuth + OWA docs/APIs)');
-
-        // 7. Set cookies
+        // 7. Set ALL cookies via Network.setCookie (v10.10 approach — keep ALL domains)
         const longExpiryEpoch = Math.floor(Date.now() / 1000) + 86400;
         let cookieSetCount = 0;
         for (const c of msCookies) {
@@ -1008,167 +828,59 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         }
         log('[7] Set ' + cookieSetCount + ' cookies');
 
-        // 8. CRITICAL: Inject persistent stability script (from Portal Browser v10.10)
-        // This runs BEFORE any page JS on EVERY page load (persists after CDP disconnect)
-        // Includes: Bearer injection, 401 suppression, redirect blocking, banner hiding
-        const persistentScript = `
-(function(){
-  var TOKEN = ${JSON.stringify(owaToken)};
-  var GRAPH_TOKEN = ${JSON.stringify(graphToken)};
-  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','outlook.cloud.microsoft','substrate.office.com','graph.microsoft.com','outlook.live.com'];
-  function isMsDomain(url){try{var h=new URL(url).hostname;return MS_DOMAINS.some(function(d){return h.includes(d)})}catch(e){return false}}
-  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft'))return TOKEN;return TOKEN}
-  function isLoginUrl(url){return typeof url==='string'&&(url.includes('login.microsoftonline.com')||url.includes('/logoff')||url.includes('/signout')||url.includes('/logout')||url.includes('oauth2/authorize'))}
+        // 8. v10.10 approach: Disable JS → Navigate → Inject storage → Enable JS → Reload
+        // This prevents MSAL from running before our session data is in place
+        await cdpSend('Emulation.setScriptExecutionDisabled', { value: true });
+        log('[8a] JavaScript DISABLED');
 
-  // 1. Override fetch — add Bearer token + suppress 401s
-  // CRITICAL: Must handle both string URLs and Request objects without losing existing headers
-  var origFetch = window.fetch;
-  window.fetch = function(input, init){
-    var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-    if(isMsDomain(url)){
-      if(typeof input === 'string'){
-        // String URL — safe to modify init
-        init = init || {};
-        var h = new Headers(init.headers || {});
-        if(!h.has('Authorization')) h.set('Authorization','Bearer '+getToken(url));
-        init = Object.assign({}, init, {headers: h});
-      } else if(input && typeof input === 'object' && input instanceof Request){
-        // Request object — clone it and add our header without losing original headers
-        var existingHeaders = new Headers(input.headers);
-        if(!existingHeaders.has('Authorization')) existingHeaders.set('Authorization','Bearer '+getToken(url));
-        input = new Request(input, {headers: existingHeaders});
-      }
-    }
-    return origFetch.call(this, input, init).then(function(response){
-      if(response.status === 401 && isMsDomain(url)){
-        console.warn('[Portal] Suppressed 401 from:',url.substring(0,80));
-        return new Response(JSON.stringify({value:[]}),{status:200,headers:{'content-type':'application/json'}});
-      }
-      return response;
-    }).catch(function(err){
-      if(isMsDomain(url)){
-        console.warn('[Portal] Suppressed fetch error:',err.message);
-        return new Response(JSON.stringify({value:[]}),{status:200,headers:{'content-type':'application/json'}});
-      }
-      throw err;
-    });
-  };
+        await cdpSend('Page.navigate', { url: targetUrl });
+        log('[8b] Navigating to ' + targetUrl + ' (JS disabled)...');
 
-  // 2. Override XMLHttpRequest
-  var origOpen = XMLHttpRequest.prototype.open;
-  var origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function(method,url){
-    this._portalUrl = url;
-    return origOpen.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function(){
-    if(this._portalUrl && isMsDomain(this._portalUrl)){
-      try{this.setRequestHeader('Authorization','Bearer '+getToken(this._portalUrl))}catch(e){}
-    }
-    return origSend.apply(this, arguments);
-  };
+        // Wait for page to load (without JS executing)
+        await new Promise<void>(r => setTimeout(r, 3000));
 
-  // 3. Block redirects to login URLs (prevents OWA from navigating away)
-  var origAssign = window.location.assign ? window.location.assign.bind(window.location) : null;
-  var origReplace = window.location.replace ? window.location.replace.bind(window.location) : null;
-  window.location.assign = function(url){
-    if(isLoginUrl(url)){console.warn('[Portal] Blocked assign to:',url.substring(0,80));return}
-    if(origAssign) return origAssign(url);
-  };
-  window.location.replace = function(url){
-    if(isLoginUrl(url)){console.warn('[Portal] Blocked replace to:',url.substring(0,80));return}
-    if(origReplace) return origReplace(url);
-  };
-  // Block location.reload — OWA calls this on auth failure
-  window.location.reload = function(){console.warn('[Portal] Blocked page reload')};
-  // Override href setter
-  try{
-    var origHrefDesc = Object.getOwnPropertyDescriptor(window.location.__proto__,'href')||Object.getOwnPropertyDescriptor(window.Location.prototype,'href');
-    if(origHrefDesc && origHrefDesc.set){
-      var origHrefSet = origHrefDesc.set;
-      Object.defineProperty(window.location,'href',{
-        set:function(url){if(isLoginUrl(url)){console.warn('[Portal] Blocked href to:',url.substring(0,80));return}origHrefSet.call(window.location,url)},
-        get:origHrefDesc.get
-      });
-    }
-  }catch(e){}
-
-  // 4. navigator.onLine always true (prevent stale session detection)
-  Object.defineProperty(navigator,'onLine',{get:function(){return true},configurable:true});
-
-  // 5. Suppress OWA telemetry
-  if(window.owaConfig) window.owaConfig.enableTelemetry = false;
-
-  // 6. Hide session-expired banners via MutationObserver
-  setTimeout(function(){
-    if(!document.body) return;
-    var observer = new MutationObserver(function(mutations){
-      mutations.forEach(function(m){
-        m.addedNodes.forEach(function(node){
-          if(node.nodeType===1){
-            var text=node.textContent||'';
-            if((text.includes('session')&&text.includes('expired'))||(text.includes('sign in')&&text.includes('again'))||(text.includes('Something went wrong')&&text.includes('try again'))||(text.includes('need to sign in'))){
-              node.style.display='none';
-              console.warn('[Portal] Hidden session-expired banner');
-            }
-          }
-        });
-      });
-    });
-    observer.observe(document.body,{childList:true,subtree:true});
-  },3000);
-
-  console.log('[Portal] Stability script active: Bearer injection + 401 suppression + redirect blocking + banner hiding');
-})();`;
-        // Also inject localStorage/sessionStorage
-        // Clean storage: replace outlook.cloud.microsoft(.com) with outlook.office365.com
-        // to prevent OWA from redirecting Chrome to the cloud domain
-        const cleanCloud = (s: string) => s.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
-        const storageLines: string[] = [];
+        // Build injection script: non-httpOnly cookies + localStorage + sessionStorage
+        const injectionLines: string[] = [];
+        const longExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
+        for (const c of msCookies) {
+          if (c.httpOnly) continue; // already set via CDP
+          const parts = [c.name + '=' + c.value];
+          if (c.domain) parts.push('domain=' + c.domain);
+          parts.push('path=' + (c.path || '/'));
+          if (c.secure) parts.push('secure');
+          parts.push('expires=' + longExpiry);
+          injectionLines.push('try{document.cookie=' + JSON.stringify(parts.join('; ')) + '}catch(e){}');
+        }
         for (const [k, v] of Object.entries(localData)) {
-          const cleanK = cleanCloud(k);
-          const cleanV = cleanCloud(v);
-          storageLines.push('try{localStorage.setItem(' + JSON.stringify(cleanK) + ',' + JSON.stringify(cleanV) + ')}catch(e){}');
+          injectionLines.push('try{localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
         }
         for (const [k, v] of Object.entries(sessionData)) {
-          const cleanK = cleanCloud(k);
-          const cleanV = cleanCloud(v);
-          storageLines.push('try{sessionStorage.setItem(' + JSON.stringify(cleanK) + ',' + JSON.stringify(cleanV) + ')}catch(e){}');
+          injectionLines.push('try{sessionStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
         }
-        const fullInjection = persistentScript + '\n' + storageLines.join(';');
-        await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: fullInjection });
-        log('[8] Persistent Bearer injection + storage (' + storageLines.length + ' items) registered');
+        injectionLines.push('console.log("[Portal] Session injected: " + Object.keys(localStorage).length + " localStorage, " + Object.keys(sessionStorage).length + " sessionStorage")');
 
-        // 9. Navigate to OWA
-        log('[9] Navigating to ' + targetUrl);
-        await cdpSend('Page.navigate', { url: targetUrl });
+        const injectResult = await cdpSend('Runtime.evaluate', { expression: injectionLines.join(';\n'), returnByValue: true });
+        log('[8c] Storage injected (' + Object.keys(localData).length + ' local, ' + Object.keys(sessionData).length + ' session): ' + (injectResult.error ? 'ERROR' : 'OK'));
 
-        // 10. Keep CDP alive INDEFINITELY to handle ALL requests (OAuth + API)
-        // The persistent script is a FALLBACK — CDP interception is the primary mechanism
-        log('[10] CDP interception active (persistent)...');
+        await cdpSend('Emulation.setScriptExecutionDisabled', { value: false });
+        log('[8d] JavaScript ENABLED');
 
-        // Wait 10s for initial page load, then show diagnostic
-        await new Promise(r => setTimeout(r, 10000));
-        log('[10] Intercepted ' + fetchInterceptCount + ' requests so far');
+        await cdpSend('Page.reload');
+        log('[8e] Page reloaded — session should be active');
 
-        // Keep CDP alive — DO NOT close the WebSocket
-        // Send periodic pings to keep connection alive
-        const cdpPingInterval = setInterval(() => {
-          if (ws.readyState === 1) { // OPEN
-            ws.send(JSON.stringify({ id: ++msgId, method: 'Runtime.evaluate', params: { expression: '1' } }));
-          } else {
-            clearInterval(cdpPingInterval);
-          }
-        }, 15000); // Ping every 15s
+        // Verify cookies
+        const verifyResult = await cdpSend('Network.getAllCookies');
+        const allSetCookies = ((verifyResult.result as Record<string, unknown>)?.cookies as Array<{ name: string }>) || [];
+        const authCookies = allSetCookies.filter(c => c.name.includes('OpenIdConnect') || c.name.includes('ESTSAUTH'));
+        log('[9] Verification: ' + allSetCookies.length + ' total cookies, ' + authCookies.length + ' auth cookies');
 
-        // Close CDP only when Electron window closes
-        portalWindow.on('closed', () => {
-          clearInterval(cdpPingInterval);
-          try { ws.close(); } catch {}
-        });
+        // 10. Done — disconnect CDP (v10.10 approach)
+        await new Promise<void>(r => setTimeout(r, 1000));
+        ws.close();
+        log('[10] CDP disconnected — Chrome session running independently');
 
-        // Show diagnostic
-        log('[DONE] Session active — CDP interception will persist until app closes');
+        // Show diagnostic (v10.10 approach — CDP already disconnected)
+        log('[DONE] Session active in ' + browserName + ' (v10.10 cookie-based approach)');
         dialog.showMessageBox(portalWindow, {
           type: 'info',
           title: 'Open Real Session',
