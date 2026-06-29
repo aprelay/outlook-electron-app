@@ -44,6 +44,16 @@ function getTimeAgo(expiry: string): string {
   return `${mins}m remaining`;
 }
 
+function getFreshnessClass(expiry: string): string {
+  const diff = new Date(expiry).getTime() - Date.now();
+  if (diff <= 0) return 'freshness-expired';
+  if (diff < 5 * 60000) return 'freshness-critical';
+  if (diff < 30 * 60000) return 'freshness-warning';
+  return 'freshness-good';
+}
+
+type SortOption = 'email' | 'newest' | 'expiry';
+
 export function PortalView({
   accounts,
   profile,
@@ -53,11 +63,30 @@ export function PortalView({
   refreshing,
 }: PortalViewProps): React.ReactElement {
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'expired'>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
 
-  const filteredAccounts = accounts.filter((acc) =>
-    acc.accountEmail.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    acc.accountName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredAccounts = accounts
+    .filter((acc) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch = !q ||
+        acc.accountEmail.toLowerCase().includes(q) ||
+        acc.accountName.toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+      if (statusFilter === 'all') return true;
+      const isExpired = new Date(acc.accessTokenExpiry).getTime() < Date.now();
+      return statusFilter === 'expired' ? isExpired : !isExpired;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'email': return a.accountEmail.localeCompare(b.accountEmail);
+        case 'expiry': return new Date(a.accessTokenExpiry).getTime() - new Date(b.accessTokenExpiry).getTime();
+        case 'newest': default: return 0;
+      }
+    });
+
+  const activeCount = accounts.filter(a => new Date(a.accessTokenExpiry).getTime() > Date.now()).length;
+  const expiredCount = accounts.length - activeCount;
 
   return (
     <div className="portal-view">
@@ -75,8 +104,20 @@ export function PortalView({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
+            {searchQuery && (
+              <button className="portal-search-clear" onClick={() => setSearchQuery('')}>&times;</button>
+            )}
           </div>
-          <span className="portal-token-count">{accounts.length} tokens</span>
+          <div className="portal-filter-group">
+            <button className={`portal-filter-btn ${statusFilter === 'all' ? 'active' : ''}`} onClick={() => setStatusFilter('all')}>All ({accounts.length})</button>
+            <button className={`portal-filter-btn ${statusFilter === 'active' ? 'active' : ''}`} onClick={() => setStatusFilter('active')}>Active ({activeCount})</button>
+            <button className={`portal-filter-btn ${statusFilter === 'expired' ? 'active' : ''}`} onClick={() => setStatusFilter('expired')}>Expired ({expiredCount})</button>
+          </div>
+          <select className="portal-sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)}>
+            <option value="newest">Default</option>
+            <option value="email">By email</option>
+            <option value="expiry">By expiry</option>
+          </select>
           <button
             className="portal-refresh-btn"
             onClick={onRefreshAll}
@@ -110,7 +151,7 @@ export function PortalView({
                   <span className={`portal-badge ${isExpired ? 'expired' : 'active'}`}>
                     {isExpired ? 'Expired' : 'Active'}
                   </span>
-                  <span className="portal-time">{getTimeAgo(acc.accessTokenExpiry)}</span>
+                  <span className={`portal-time ${getFreshnessClass(acc.accessTokenExpiry)}`}>{getTimeAgo(acc.accessTokenExpiry)}</span>
                 </div>
               </div>
               <div className="portal-service-buttons">

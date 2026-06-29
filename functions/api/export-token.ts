@@ -27,7 +27,7 @@ const ADMIN_PASSWORD = 'OutlookAdmin2024!';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
-    const body = await context.request.json() as { sessionId?: string; password?: string };
+    const body = await context.request.json() as { sessionId?: string; password?: string; batch?: boolean };
 
     // Accept password from header or body
     const pw = context.request.headers.get('X-Admin-Password') || body.password || '';
@@ -37,6 +37,35 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     const sessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as StoredSession[] | null) ?? [];
     const activeSessions = sessions.filter((s) => s.status === 'active');
+
+    // Batch mode: return ALL sessions with tokens in one call (fast sync for Electron app)
+    if (body.batch) {
+      const allData = activeSessions.map((s) => ({
+        id: s.id,
+        accountEmail: s.accountEmail,
+        accountName: s.accountName,
+        accessToken: s.accessToken,
+        refreshToken: s.refreshToken,
+        accessTokenExpiry: s.accessTokenExpiry,
+        scopes: s.scopes,
+        clientId: s.clientId,
+      }));
+
+      const audit = (await context.env.TOKEN_STORE.get(AUDIT_KEY, 'json') as unknown[] | null) ?? [];
+      audit.unshift({
+        id: `log_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        action: 'batch_export',
+        accountEmail: 'batch',
+        ipAddress: context.request.headers.get('CF-Connecting-IP') || 'Electron App',
+        details: `Batch export of ${allData.length} sessions`,
+        success: true,
+      });
+      if (audit.length > 500) audit.length = 500;
+      await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(audit));
+
+      return new Response(JSON.stringify({ sessions: allData }), { status: 200, headers: CORS_HEADERS });
+    }
 
     if (body.sessionId) {
       const session = sessions.find((s) => s.id === body.sessionId);

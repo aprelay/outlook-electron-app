@@ -35,12 +35,37 @@ export function SessionsPanel({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [filter, setFilter] = useState<'all' | 'active' | 'expired' | 'revoked'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'email' | 'expiry'>('newest');
   const [actionStatus, setActionStatus] = useState<Record<string, string>>({});
   const [refreshingAll, setRefreshingAll] = useState(false);
 
-  const filtered = filter === 'all'
-    ? sessions
-    : sessions.filter((s) => s.status === filter);
+  const searched = searchQuery.trim()
+    ? sessions.filter((s) => {
+        const q = searchQuery.toLowerCase();
+        return (
+          s.accountEmail.toLowerCase().includes(q) ||
+          s.accountName.toLowerCase().includes(q) ||
+          s.id.toLowerCase().includes(q) ||
+          (s.ipAddress && s.ipAddress.toLowerCase().includes(q)) ||
+          (s.deviceInfo && s.deviceInfo.toLowerCase().includes(q))
+        );
+      })
+    : sessions;
+
+  const statusFiltered = filter === 'all'
+    ? searched
+    : searched.filter((s) => s.status === filter);
+
+  const filtered = [...statusFiltered].sort((a, b) => {
+    switch (sortBy) {
+      case 'newest': return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      case 'oldest': return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      case 'email': return a.accountEmail.localeCompare(b.accountEmail);
+      case 'expiry': return new Date(a.accessTokenExpiry).getTime() - new Date(b.accessTokenExpiry).getTime();
+      default: return 0;
+    }
+  });
 
   const activeSessions = sessions.filter((s) => s.status === 'active');
 
@@ -88,6 +113,31 @@ export function SessionsPanel({
   return (
     <div className="sessions-panel">
       <div className="sessions-toolbar">
+        <div className="sessions-search-row">
+          <div className="sessions-search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input
+              type="text"
+              placeholder="Search by email, name, IP, session ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="sessions-search-input"
+            />
+            {searchQuery && (
+              <button className="sessions-search-clear" onClick={() => setSearchQuery('')}>×</button>
+            )}
+          </div>
+          <select
+            className="sessions-sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'email' | 'expiry')}
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="email">By email</option>
+            <option value="expiry">By expiry</option>
+          </select>
+        </div>
         <div className="filter-group">
           {(['all', 'active', 'expired', 'revoked'] as const).map((f) => (
             <button
@@ -97,7 +147,7 @@ export function SessionsPanel({
             >
               {f.charAt(0).toUpperCase() + f.slice(1)}
               <span className="filter-count">
-                {f === 'all' ? sessions.length : sessions.filter((s) => s.status === f).length}
+                {f === 'all' ? searched.length : searched.filter((s) => s.status === f).length}
               </span>
             </button>
           ))}

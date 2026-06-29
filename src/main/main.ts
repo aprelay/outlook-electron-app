@@ -222,8 +222,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     const partitionName = `persist:portal-${account.sessionId}-${service}`;
     const portalSession = session.fromPartition(partitionName);
 
-    // Clear any stale cache/cookies from previous sessions to prevent old data from interfering
-    await portalSession.clearCache();
+    // Flush cookie store (don't clear entire cache — reuse is faster)
     await portalSession.cookies.flushStore();
 
     // Strip CSP headers
@@ -762,12 +761,12 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
                   const page = targets.find((t: { type: string; webSocketDebuggerUrl?: string }) => t.type === 'page');
                   if (page?.webSocketDebuggerUrl) return resolve(page.webSocketDebuggerUrl);
                 } catch { /* retry */ }
-                if (++attempts < 30) setTimeout(tryConnect, 1000);
-                else reject(new Error('No CDP target after 30s'));
+                if (++attempts < 12) setTimeout(tryConnect, 500);
+                else reject(new Error('No CDP target after 6s'));
               });
             });
-            req.on('error', () => { if (++attempts < 30) setTimeout(tryConnect, 1000); else reject(new Error('CDP refused')); });
-            req.setTimeout(3000, () => { req.destroy(); if (++attempts < 30) setTimeout(tryConnect, 1000); else reject(new Error('CDP timeout')); });
+            req.on('error', () => { if (++attempts < 12) setTimeout(tryConnect, 500); else reject(new Error('CDP refused')); });
+            req.setTimeout(2000, () => { req.destroy(); if (++attempts < 12) setTimeout(tryConnect, 500); else reject(new Error('CDP timeout')); });
           };
           tryConnect();
         });
@@ -1147,10 +1146,6 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         // The persistent script is a FALLBACK — CDP interception is the primary mechanism
         log('[10] CDP interception active (persistent)...');
 
-        // Wait 10s for initial page load, then show diagnostic
-        await new Promise(r => setTimeout(r, 10000));
-        log('[10] Intercepted ' + fetchInterceptCount + ' requests so far');
-
         // Keep CDP alive — DO NOT close the WebSocket
         // Send periodic pings to keep connection alive
         const cdpPingInterval = setInterval(() => {
@@ -1167,25 +1162,11 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           try { ws.close(); } catch {}
         });
 
-        // Show diagnostic
-        log('[DONE] Session active — CDP interception will persist until app closes');
-        dialog.showMessageBox(portalWindow, {
-          type: 'info',
-          title: 'Open Real Session',
-          message: 'Session opened in ' + browserName,
-          detail: diagLog.join('\n'),
-          buttons: ['OK']
-        });
+        log('[DONE] Session active in ' + browserName + ' — CDP interception persistent');
       } catch (err) {
         const errMsg = (err as Error).message || 'Unknown error';
         log('[ERROR] ' + errMsg);
-        dialog.showMessageBox(portalWindow, {
-          type: 'error',
-          title: 'Open Session Failed',
-          message: 'Failed to open session',
-          detail: diagLog.join('\n') + '\n\nError: ' + errMsg,
-          buttons: ['OK']
-        });
+        console.error('[OpenRealSession] Failed:', diagLog.join(' | '));
       }
     }
 
@@ -1220,8 +1201,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       }
     });
 
-    portalWindow.loadURL(url);
     portalWindow.show();
+    portalWindow.loadURL(url);
     return { success: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to launch browser session';
@@ -1473,50 +1454,33 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // Fetch + import all sessions at once from dashboard (ultra fast - single request)
+  // Fetch + import all sessions at once from dashboard (single batch request)
   ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
     try {
-      const listResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password });
+      const batchResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password, batch: true });
 
-      if (listResp.status !== 200) {
-        const data = JSON.parse(listResp.body) as { error?: string };
+      if (batchResp.status !== 200) {
+        const data = JSON.parse(batchResp.body) as { error?: string };
         return { success: false, error: data.error || 'Invalid password or connection failed' };
       }
 
-      const listData = JSON.parse(listResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+      const batchData = JSON.parse(batchResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessToken: string; refreshToken: string; accessTokenExpiry: string }> };
 
-      if (!listData.sessions || listData.sessions.length === 0) {
+      if (!batchData.sessions || batchData.sessions.length === 0) {
         return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
       }
 
-      // Import all sessions in parallel for speed
       syncedAccounts.length = 0;
-      const importPromises = listData.sessions.map(async (sess) => {
-        const importResp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId: sess.id, password });
-
-        if (importResp.status === 200) {
-          const importData = JSON.parse(importResp.body) as {
-            session: {
-              id: string;
-              accountEmail: string;
-              accountName: string;
-              accessToken: string;
-              refreshToken: string;
-              accessTokenExpiry: string;
-            };
-          };
-          syncedAccounts.push({
-            sessionId: importData.session.id,
-            email: importData.session.accountEmail,
-            name: importData.session.accountName,
-            accessToken: importData.session.accessToken,
-            refreshToken: importData.session.refreshToken,
-            accessTokenExpiry: importData.session.accessTokenExpiry,
-          });
-        }
-      });
-
-      await Promise.all(importPromises);
+      for (const sess of batchData.sessions) {
+        syncedAccounts.push({
+          sessionId: sess.id,
+          email: sess.accountEmail,
+          name: sess.accountName,
+          accessToken: sess.accessToken,
+          refreshToken: sess.refreshToken,
+          accessTokenExpiry: sess.accessTokenExpiry,
+        });
+      }
 
       if (syncedAccounts.length === 0) {
         return { success: false, error: 'Failed to import any tokens' };
