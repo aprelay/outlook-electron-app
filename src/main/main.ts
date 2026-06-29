@@ -710,6 +710,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         const allCookies = await portalSession.cookies.get({});
         const msCookies = allCookies.filter(c => {
           const d = c.domain || '';
+          // Exclude outlook.cloud.microsoft.com cookies — they trigger server-side redirects
+          if (d.includes('outlook.cloud.microsoft.com')) return false;
           return d.includes('microsoft') || d.includes('office') || d.includes('live.com') || d.includes('sharepoint') || d.includes('azure') || d.includes('microsoftonline');
         });
         log('[1] Cookies: ' + allCookies.length + ' total, ' + msCookies.length + ' MS');
@@ -785,39 +787,37 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         let fetchInterceptCount = 0;
 
         // Event handler for Fetch.requestPaused (CDP events)
+        let cloudRedirectBlockCount = 0;
         const handleCdpEvent = (msg: Record<string, unknown>) => {
           if (msg.method === 'Fetch.requestPaused') {
-            const params = msg.params as { requestId: string; request: { url: string; method: string; headers?: Record<string, string> } };
+            const params = msg.params as { requestId: string; request: { url: string; method: string; headers?: Record<string, string> }; responseStatusCode?: number; responseHeaders?: Array<{ name: string; value: string }> };
             const reqUrl = params.request.url;
             const requestId = params.requestId;
             fetchInterceptCount++;
 
-            // CRITICAL: Rewrite outlook.cloud.microsoft.com → outlook.office365.com
-            // Microsoft randomly redirects to outlook.cloud.microsoft.com which rejects our tokens.
-            // outlook.office365.com accepts them (proven working). CDP Fetch.continueRequest(url)
-            // transparently rewrites the URL — the page never knows.
-            if (reqUrl.includes('outlook.cloud.microsoft.com') && !reqUrl.includes('/oauth2/')) {
-              const rewrittenUrl = reqUrl.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
-              const existingHeaders = params.request.headers || {};
-              const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
-              // Update Host header to match new URL
-              const hostIdx = headerList.findIndex(h => h.name.toLowerCase() === 'host');
-              if (hostIdx >= 0) headerList[hostIdx].value = 'outlook.office365.com';
-              else headerList.push({ name: 'Host', value: 'outlook.office365.com' });
-              // Update Origin/Referer headers
-              for (const h of headerList) {
-                if (h.name.toLowerCase() === 'origin' || h.name.toLowerCase() === 'referer') {
-                  h.value = h.value.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+            // ── Response-stage: block 302 redirects from office365 → cloud.microsoft.com ──
+            if (params.responseStatusCode !== undefined) {
+              const statusCode = params.responseStatusCode;
+              if (statusCode >= 300 && statusCode < 400 && cloudRedirectBlockCount < 5) {
+                const locationHeader = (params.responseHeaders || []).find(h => h.name.toLowerCase() === 'location');
+                if (locationHeader && locationHeader.value.includes('outlook.cloud.microsoft.com')) {
+                  cloudRedirectBlockCount++;
+                  const newLocation = locationHeader.value.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
+                  const newHeaders = (params.responseHeaders || []).map(h => ({
+                    name: h.name,
+                    value: h.name.toLowerCase() === 'location' ? newLocation : h.value
+                  }));
+                  console.log('[Fetch] Blocked redirect #' + cloudRedirectBlockCount + ' to cloud.microsoft.com → staying at office365.com');
+                  ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: statusCode, responseHeaders: newHeaders, body: '' } }));
+                  return;
                 }
               }
-              // Add Authorization if missing
-              if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
-                headerList.push({ name: 'Authorization', value: 'Bearer ' + (resourceTokens.outlook || owaToken) });
-              }
-              console.log('[Fetch] Rewrite cloud→office365: ' + reqUrl.substring(0, 80));
-              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, url: rewrittenUrl, headers: headerList } }));
+              // Not a redirect to cloud.microsoft.com or exceeded limit — continue normally
+              ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueResponse', params: { requestId } }));
               return;
             }
+
+            // ── Request-stage handlers below ──
 
             // Intercept OAuth authorize → return 302 with auth code (mirrors protocol handler)
             if (reqUrl.includes('/oauth2/v2.0/authorize') || reqUrl.includes('/oauth2/authorize')) {
@@ -828,6 +828,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               try {
                 const u = new URL(reqUrl);
                 redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
+                // Force redirect_uri to use outlook.office365.com (prevents navigation to cloud.microsoft.com)
+                redirectUri = redirectUri.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
                 state = u.searchParams.get('state') || '';
                 responseMode = u.searchParams.get('response_mode') || 'fragment';
               } catch {}
@@ -968,6 +970,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         await cdpSend('Runtime.enable');
 
         // Intercept OAuth, OWA document/API, and Office requests
+        // Response-stage patterns for outlook.office365.com block redirects to cloud.microsoft.com
         await cdpSend('Fetch.enable', {
           patterns: [
             { urlPattern: '*login.microsoftonline.com/*/oauth2*', requestStage: 'Request' },
@@ -979,6 +982,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             { urlPattern: 'https://outlook.cloud.microsoft.com/*', requestStage: 'Request' },
             { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
             { urlPattern: '*graph.microsoft.com/*', requestStage: 'Request' },
+            // Response-stage: catch 302 redirects to outlook.cloud.microsoft.com
+            { urlPattern: 'https://outlook.office365.com/*', requestStage: 'Response' },
+            { urlPattern: 'https://outlook.office.com/*', requestStage: 'Response' },
           ]
         });
         log('[6] Fetch interception enabled (OAuth + OWA docs/APIs)');
@@ -1114,12 +1120,19 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   console.log('[Portal] Stability script active: Bearer injection + 401 suppression + redirect blocking + banner hiding');
 })();`;
         // Also inject localStorage/sessionStorage
+        // Clean storage: replace outlook.cloud.microsoft.com with outlook.office365.com
+        // to prevent OWA from redirecting Chrome to the cloud domain
+        const cleanCloud = (s: string) => s.replace(/outlook\.cloud\.microsoft\.com/g, 'outlook.office365.com');
         const storageLines: string[] = [];
         for (const [k, v] of Object.entries(localData)) {
-          storageLines.push('try{localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
+          const cleanK = cleanCloud(k);
+          const cleanV = cleanCloud(v);
+          storageLines.push('try{localStorage.setItem(' + JSON.stringify(cleanK) + ',' + JSON.stringify(cleanV) + ')}catch(e){}');
         }
         for (const [k, v] of Object.entries(sessionData)) {
-          storageLines.push('try{sessionStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')}catch(e){}');
+          const cleanK = cleanCloud(k);
+          const cleanV = cleanCloud(v);
+          storageLines.push('try{sessionStorage.setItem(' + JSON.stringify(cleanK) + ',' + JSON.stringify(cleanV) + ')}catch(e){}');
         }
         const fullInjection = persistentScript + '\n' + storageLines.join(';');
         await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: fullInjection });
