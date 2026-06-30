@@ -37,7 +37,14 @@ function getTimeAgo(expiry: string): string {
   const now = Date.now();
   const exp = new Date(expiry).getTime();
   const diff = exp - now;
-  if (diff <= 0) return 'Expired';
+  if (diff <= 0) {
+    const elapsed = Math.abs(diff);
+    const hours = Math.floor(elapsed / 3600000);
+    const mins = Math.floor((elapsed % 3600000) / 60000);
+    if (hours > 24) return `Dormant ${Math.floor(hours / 24)}d ago`;
+    if (hours > 0) return `Dormant ${hours}h ${mins}m ago`;
+    return `Dormant ${mins}m ago`;
+  }
   const hours = Math.floor(diff / 3600000);
   const mins = Math.floor((diff % 3600000) / 60000);
   if (hours > 0) return `${hours}h ${mins}m remaining`;
@@ -111,7 +118,7 @@ export function PortalView({
           <div className="portal-filter-group">
             <button className={`portal-filter-btn ${statusFilter === 'all' ? 'active' : ''}`} onClick={() => setStatusFilter('all')}>All ({accounts.length})</button>
             <button className={`portal-filter-btn ${statusFilter === 'active' ? 'active' : ''}`} onClick={() => setStatusFilter('active')}>Active ({activeCount})</button>
-            <button className={`portal-filter-btn ${statusFilter === 'expired' ? 'active' : ''}`} onClick={() => setStatusFilter('expired')}>Expired ({expiredCount})</button>
+            <button className={`portal-filter-btn ${statusFilter === 'expired' ? 'active' : ''}`} onClick={() => setStatusFilter('expired')}>Dormant ({expiredCount})</button>
           </div>
           <select className="portal-sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)}>
             <option value="newest">Default</option>
@@ -132,6 +139,8 @@ export function PortalView({
       <div className="portal-accounts-list">
         {filteredAccounts.map((acc) => {
           const isExpired = new Date(acc.accessTokenExpiry).getTime() < Date.now();
+          const statusLabel = isExpired ? 'Dormant' : 'Active';
+          const statusClass = isExpired ? 'dormant' : 'active';
           return (
             <div key={acc.id} className="portal-account-card">
               <div className="portal-account-main">
@@ -148,8 +157,8 @@ export function PortalView({
                   </div>
                 </div>
                 <div className="portal-account-badges">
-                  <span className={`portal-badge ${isExpired ? 'expired' : 'active'}`}>
-                    {isExpired ? 'Expired' : 'Active'}
+                  <span className={`portal-badge ${statusClass}`}>
+                    {statusLabel}
                   </span>
                   <span className={`portal-time ${getFreshnessClass(acc.accessTokenExpiry)}`}>{getTimeAgo(acc.accessTokenExpiry)}</span>
                 </div>

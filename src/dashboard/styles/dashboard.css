@@ -615,6 +615,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 .status-badge.green { background: #dff6dd; color: var(--d-green); }
 .status-badge.yellow { background: #fff4ce; color: #986f0b; }
 .status-badge.red { background: #fde7e9; color: var(--d-red); }
+.status-badge.amber { background: #fef3c7; color: #d97706; }
 
 .session-last-active { font-size: 12px; color: var(--d-text-light); }
 

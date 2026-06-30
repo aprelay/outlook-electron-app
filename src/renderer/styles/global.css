@@ -1773,7 +1773,7 @@ a {
 .freshness-good { color: #22c55e; }
 .freshness-warning { color: #f59e0b; }
 .freshness-critical { color: #ef4444; font-weight: 600; }
-.freshness-expired { color: #6b7280; }
+.freshness-expired { color: #f59e0b; }
 
 .portal-refresh-btn {
   display: flex;
@@ -1885,6 +1885,11 @@ a {
 .portal-badge.expired {
   background: rgba(239, 68, 68, 0.15);
   color: #ef4444;
+}
+
+.portal-badge.dormant {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
 }
 
 .portal-time {

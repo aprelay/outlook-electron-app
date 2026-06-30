@@ -207,9 +207,17 @@ export function SessionsPanel({
                 </div>
               </div>
               <div className="session-status-area">
-                <span className={`status-badge ${getStatusColor(session.status)}`}>
-                  {session.status.toUpperCase()}
-                </span>
+                {(() => {
+                  const accessExpired = new Date(session.accessTokenExpiry).getTime() <= Date.now();
+                  const isDormant = session.status === 'active' && accessExpired;
+                  const displayStatus = isDormant ? 'DORMANT' : session.status.toUpperCase();
+                  const statusColor = isDormant ? 'amber' : getStatusColor(session.status);
+                  return (
+                    <span className={`status-badge ${statusColor}`}>
+                      {displayStatus}
+                    </span>
+                  );
+                })()}
                 <span className="session-last-active">
                   Last active: {formatRelativeTime(session.lastActivity)}
                 </span>

@@ -36,7 +36,15 @@ export function getTimeUntilExpiry(dateString: string): string {
   const expiry = new Date(dateString).getTime();
   const diff = expiry - now;
 
-  if (diff <= 0) return 'Expired';
+  if (diff <= 0) {
+    const elapsed = Math.abs(diff);
+    const mins = Math.floor(elapsed / 60000);
+    const hours = Math.floor(elapsed / 3600000);
+    const days = Math.floor(elapsed / 86400000);
+    if (days > 0) return `Dormant ${days}d ago`;
+    if (hours > 0) return `Dormant ${hours}h ago`;
+    return `Dormant ${mins}m ago`;
+  }
 
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);

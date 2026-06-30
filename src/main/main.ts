@@ -1454,50 +1454,42 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // Fetch + import all sessions from dashboard
-  // Try batch mode first (single request), fall back to N+1 if API doesn't support batch
+  // Fetch + import all sessions from dashboard (optimized for speed)
   ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
     try {
-      // Try batch mode first (returns all sessions with tokens in one call)
-      const batchResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password, batch: true });
+      // Single request — batch mode returns all sessions with tokens
+      const resp = await httpsPost(`${DASHBOARD_API}/export-token`, { password, batch: true });
 
-      let hasBatchTokens = false;
-      if (batchResp.status === 200) {
-        const batchData = JSON.parse(batchResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessToken?: string; refreshToken?: string; accessTokenExpiry: string }> };
-        if (batchData.sessions && batchData.sessions.length > 0 && batchData.sessions[0].accessToken) {
-          // Batch mode worked — sessions include tokens
-          hasBatchTokens = true;
-          syncedAccounts.length = 0;
-          for (const sess of batchData.sessions) {
-            syncedAccounts.push({
-              sessionId: sess.id,
-              email: sess.accountEmail,
-              name: sess.accountName,
-              accessToken: sess.accessToken!,
-              refreshToken: sess.refreshToken || '',
-              accessTokenExpiry: sess.accessTokenExpiry,
-            });
-          }
-        }
+      if (resp.status !== 200) {
+        const data = JSON.parse(resp.body) as { error?: string };
+        return { success: false, error: data.error || 'Invalid password or connection failed' };
       }
 
-      // Fallback: list sessions then import each individually (v1.0.29 approach)
-      if (!hasBatchTokens) {
-        const listResp = await httpsPost(`${DASHBOARD_API}/export-token`, { password });
+      const respData = JSON.parse(resp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessToken?: string; refreshToken?: string; accessTokenExpiry: string }> };
 
-        if (listResp.status !== 200) {
-          const data = JSON.parse(listResp.body) as { error?: string };
-          return { success: false, error: data.error || 'Invalid password or connection failed' };
-        }
+      if (!respData.sessions || respData.sessions.length === 0) {
+        return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
+      }
 
-        const listData = JSON.parse(listResp.body) as { sessions: Array<{ id: string; accountEmail: string; accountName: string; accessTokenExpiry: string }> };
+      const hasBatchTokens = respData.sessions[0].accessToken;
 
-        if (!listData.sessions || listData.sessions.length === 0) {
-          return { success: false, error: 'No tokens found. Capture a token first at the dashboard.' };
-        }
-
+      if (hasBatchTokens) {
+        // Fast path: batch response includes tokens — no extra API calls needed
         syncedAccounts.length = 0;
-        const importPromises = listData.sessions.map(async (sess) => {
+        for (const sess of respData.sessions) {
+          syncedAccounts.push({
+            sessionId: sess.id,
+            email: sess.accountEmail,
+            name: sess.accountName,
+            accessToken: sess.accessToken!,
+            refreshToken: sess.refreshToken || '',
+            accessTokenExpiry: sess.accessTokenExpiry,
+          });
+        }
+      } else {
+        // Fallback: response only has metadata — import each session individually
+        syncedAccounts.length = 0;
+        const importPromises = respData.sessions.map(async (sess) => {
           const importResp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId: sess.id, password });
           if (importResp.status === 200) {
             const importData = JSON.parse(importResp.body) as {
@@ -1532,19 +1524,14 @@ function setupIpcHandlers(): void {
         accessTokenExpiry: a.accessTokenExpiry,
       }));
 
-      // Get profile without blocking
-      let profile = { displayName: first.name, mail: first.email, userPrincipalName: first.email, jobTitle: '' };
-      try {
-        const gProfile = await graphClient.getProfile();
-        profile = {
-          displayName: gProfile.displayName || first.name,
-          mail: gProfile.mail || first.email,
-          userPrincipalName: gProfile.userPrincipalName || first.email,
-          jobTitle: gProfile.jobTitle || '',
-        };
-      } catch {
-        // Use basic info from token
-      }
+      // Use token-decoded info immediately — skip Graph API profile call for speed
+      const decoded = decodeJwt(first.accessToken);
+      const profile = {
+        displayName: (decoded?.name as string) || first.name,
+        mail: (decoded?.upn as string) || (decoded?.unique_name as string) || first.email,
+        userPrincipalName: (decoded?.upn as string) || first.email,
+        jobTitle: '',
+      };
 
       return { success: true, accounts, profile, activeAccountEmail: first.email };
     } catch (error: unknown) {
