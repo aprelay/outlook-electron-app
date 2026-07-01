@@ -23,7 +23,7 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json',
 };
 
-const ADMIN_PASSWORD = 'OutlookAdmin2024!';
+const DEFAULT_ADMIN_PASSWORD = 'OutlookAdmin2024!';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
@@ -31,7 +31,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     // Accept password from header or body
     const pw = context.request.headers.get('X-Admin-Password') || body.password || '';
-    if (pw !== ADMIN_PASSWORD) {
+    const adminPw = (await context.env.TOKEN_STORE.get('admin_password')) || DEFAULT_ADMIN_PASSWORD;
+    if (pw !== adminPw) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
     }
 

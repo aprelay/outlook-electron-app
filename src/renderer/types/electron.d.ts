@@ -120,7 +120,7 @@ export interface ElectronAPI {
     fetchSessions: (password: string) => Promise<SyncResult>;
     importToken: (password: string, sessionId: string) => Promise<SyncResult>;
     refreshImportedToken: () => Promise<{ success: boolean; error?: string }>;
-    fetchAndImportAll: (password: string) => Promise<SyncResult>;
+    fetchAndImportAll: (serverUrl: string, password: string) => Promise<SyncResult>;
     switchAccount: (sessionId: string) => Promise<SyncResult>;
     refreshAll: () => Promise<SyncResult>;
   };

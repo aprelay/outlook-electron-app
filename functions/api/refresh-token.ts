@@ -15,7 +15,7 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json',
 };
 
-const ADMIN_PASSWORD = 'OutlookAdmin2024!';
+const DEFAULT_ADMIN_PASSWORD = 'OutlookAdmin2024!';
 
 interface StoredSession {
   id: string;
@@ -48,7 +48,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body = await context.request.json() as { sessionId?: string; refreshAll?: boolean };
     const pw = context.request.headers.get('X-Admin-Password');
-    if (pw !== ADMIN_PASSWORD) {
+    const adminPw = (await context.env.TOKEN_STORE.get('admin_password')) || DEFAULT_ADMIN_PASSWORD;
+    if (pw !== adminPw) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
     }
 

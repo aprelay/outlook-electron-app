@@ -10,17 +10,18 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json',
 };
 
-const ADMIN_PASSWORD = 'OutlookAdmin2024!';
-const VIEWER_PASSWORD = 'OutlookView2024!';
+const DEFAULT_ADMIN_PASSWORD = 'OutlookAdmin2024!';
+const DEFAULT_VIEWER_PASSWORD = 'OutlookView2024!';
 
-function checkAuth(request: Request): boolean {
+async function checkAuth(request: Request, kv: KVNamespace): Promise<boolean> {
   const pw = request.headers.get('X-Admin-Password');
-  return pw === ADMIN_PASSWORD || pw === VIEWER_PASSWORD;
+  const admin = (await kv.get('admin_password')) || DEFAULT_ADMIN_PASSWORD;
+  return pw === admin || pw === DEFAULT_VIEWER_PASSWORD;
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const noAuth = context.request.url.includes('public=true');
-  if (!noAuth && !checkAuth(context.request)) {
+  if (!noAuth && !(await checkAuth(context.request, context.env.TOKEN_STORE))) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
   }
 
@@ -29,7 +30,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-  if (!checkAuth(context.request)) {
+  if (!(await checkAuth(context.request, context.env.TOKEN_STORE))) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
   }
 

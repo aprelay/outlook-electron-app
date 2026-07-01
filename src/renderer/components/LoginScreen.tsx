@@ -8,7 +8,7 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactElement {
-  const [serverUrl] = useState('https://outlook-token-dashboard.pages.dev');
+  const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('dashboard_url') || 'https://outlook-token-dashboard.pages.dev');
   const [accessKey, setAccessKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +26,9 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
     setStatus('Connecting...');
 
     try {
-      const result = await window.electronAPI.sync.fetchAndImportAll(accessKey);
+      // Save URL for next launch
+      localStorage.setItem('dashboard_url', serverUrl);
+      const result = await window.electronAPI.sync.fetchAndImportAll(serverUrl, accessKey);
 
       if (result.success && result.profile && result.accounts && onSyncComplete) {
         setStatus('Loading portals...');
@@ -87,8 +89,8 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
               type="text"
               className="sync-input"
               value={serverUrl}
-              readOnly
-              disabled
+              onChange={(e) => setServerUrl(e.target.value)}
+              placeholder="https://your-instance.pages.dev"
             />
 
             <label className="form-label">

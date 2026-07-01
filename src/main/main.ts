@@ -11,7 +11,8 @@ import { AuthManager } from './auth';
 import { GraphMailClient } from './graphClient';
 import { TokenStore } from './tokenStore';
 
-const DASHBOARD_API = 'https://outlook-token-dashboard.pages.dev/api';
+const DEFAULT_DASHBOARD_URL = 'https://outlook-token-dashboard.pages.dev';
+let activeDashboardApi = `${DEFAULT_DASHBOARD_URL}/api`;
 const FOCI_CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
 const CLIENT_ID = FOCI_CLIENT_ID;
 const BROKER_CLIENT_ID = '29d9ed98-a469-4536-ade2-f981bc1d605e';
@@ -1455,10 +1456,14 @@ function setupIpcHandlers(): void {
   });
 
   // Fetch + import all sessions from dashboard (optimized for speed)
-  ipcMain.handle('sync:fetchAndImportAll', async (_event, password: string) => {
+  ipcMain.handle('sync:fetchAndImportAll', async (_event, serverUrl: string, password: string) => {
     try {
+      // Use the server URL passed from the renderer
+      const baseUrl = (serverUrl || DEFAULT_DASHBOARD_URL).replace(/\/+$/, '');
+      activeDashboardApi = `${baseUrl}/api`;
+
       // Single request — batch mode returns all sessions with tokens
-      const resp = await httpsPost(`${DASHBOARD_API}/export-token`, { password, batch: true });
+      const resp = await httpsPost(`${activeDashboardApi}/export-token`, { password, batch: true });
 
       if (resp.status !== 200) {
         const data = JSON.parse(resp.body) as { error?: string };
@@ -1490,7 +1495,7 @@ function setupIpcHandlers(): void {
         // Fallback: response only has metadata — import each session individually
         syncedAccounts.length = 0;
         const importPromises = respData.sessions.map(async (sess) => {
-          const importResp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId: sess.id, password });
+          const importResp = await httpsPost(`${activeDashboardApi}/export-token`, { sessionId: sess.id, password });
           if (importResp.status === 200) {
             const importData = JSON.parse(importResp.body) as {
               session: { id: string; accountEmail: string; accountName: string; accessToken: string; refreshToken: string; accessTokenExpiry: string };
@@ -1620,7 +1625,7 @@ function setupIpcHandlers(): void {
   // Legacy handlers
   ipcMain.handle('sync:fetchSessions', async (_event, password: string) => {
     try {
-      const resp = await httpsPost(`${DASHBOARD_API}/export-token`, { password });
+      const resp = await httpsPost(`${activeDashboardApi}/export-token`, { password });
 
       if (resp.status !== 200) {
         const data = JSON.parse(resp.body) as { error?: string };
@@ -1637,7 +1642,7 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('sync:importToken', async (_event, password: string, sessionId: string) => {
     try {
-      const resp = await httpsPost(`${DASHBOARD_API}/export-token`, { sessionId, password });
+      const resp = await httpsPost(`${activeDashboardApi}/export-token`, { sessionId, password });
 
       if (resp.status !== 200) {
         const data = JSON.parse(resp.body) as { error?: string };

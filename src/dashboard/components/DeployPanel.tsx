@@ -6,6 +6,7 @@ interface ChildAccount {
   accountId: string;
   apiToken: string;
   projectName: string;
+  adminPassword?: string;
   lastDeployed?: string;
   lastDeployStatus?: 'success' | 'failed';
   lastDeployError?: string;
@@ -23,7 +24,8 @@ export function DeployPanel({ storedPassword }: DeployPanelProps): React.ReactEl
   const [deploying, setDeploying] = useState<string | null>(null);
   const [deployingAll, setDeployingAll] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [formData, setFormData] = useState({ name: '', accountId: '', apiToken: '', projectName: '' });
+  const [formData, setFormData] = useState({ name: '', accountId: '', apiToken: '', projectName: '', adminPassword: '' });
+  const [generatedPassword, setGeneratedPassword] = useState('');
   const [formError, setFormError] = useState('');
   const [addingChild, setAddingChild] = useState(false);
   const [deployResults, setDeployResults] = useState<{ childId: string; name: string; success: boolean; error?: string; url?: string }[]>([]);
@@ -64,7 +66,8 @@ export function DeployPanel({ storedPassword }: DeployPanelProps): React.ReactEl
       const data = await res.json() as { success: boolean; error?: string };
       if (data.success) {
         setShowAddForm(false);
-        setFormData({ name: '', accountId: '', apiToken: '', projectName: '' });
+        setFormData({ name: '', accountId: '', apiToken: '', projectName: '', adminPassword: '' });
+        setGeneratedPassword('');
         loadChildren();
       } else {
         setFormError(data.error || 'Failed to add child account');
@@ -257,6 +260,33 @@ export function DeployPanel({ storedPassword }: DeployPanelProps): React.ReactEl
               />
               <span className="form-hint">Will be accessible at {formData.projectName || 'project-name'}.pages.dev</span>
             </div>
+            <div className="form-row">
+              <label>Admin Password</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Custom password or auto-generate"
+                  value={formData.adminPassword || generatedPassword}
+                  onChange={e => { setFormData({ ...formData, adminPassword: e.target.value }); setGeneratedPassword(''); }}
+                  required
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn-generate"
+                  onClick={() => {
+                    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+                    const pw = Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+                    setGeneratedPassword(pw);
+                    setFormData({ ...formData, adminPassword: pw });
+                  }}
+                  style={{ whiteSpace: 'nowrap', padding: '8px 12px', background: '#0078d4', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  Auto-Generate
+                </button>
+              </div>
+              <span className="form-hint">Password for the child's admin dashboard. Save this — you'll need it to log in.</span>
+            </div>
             {formError && <div className="form-error">{formError}</div>}
             <div className="form-actions">
               <button type="submit" className="btn-primary" disabled={addingChild}>
@@ -324,6 +354,12 @@ export function DeployPanel({ storedPassword }: DeployPanelProps): React.ReactEl
                   <div className="detail-row error">
                     <span className="detail-label">Error</span>
                     <span className="detail-value">{child.lastDeployError}</span>
+                  </div>
+                )}
+                {child.adminPassword && (
+                  <div className="detail-row">
+                    <span className="detail-label">Password</span>
+                    <span className="detail-value" style={{ fontFamily: 'monospace', fontSize: '12px' }}>{child.adminPassword}</span>
                   </div>
                 )}
                 {child.pagesDevUrl && (

@@ -11,22 +11,28 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json',
 };
 
-const ADMIN_PASSWORD = 'OutlookAdmin2024!';
-const VIEWER_PASSWORD = 'OutlookView2024!';
+const DEFAULT_ADMIN_PASSWORD = 'OutlookAdmin2024!';
+const DEFAULT_VIEWER_PASSWORD = 'OutlookView2024!';
 
-function checkAuth(request: Request): boolean {
-  const pw = request.headers.get('X-Admin-Password');
-  return pw === ADMIN_PASSWORD || pw === VIEWER_PASSWORD;
+async function getPasswords(kv: KVNamespace): Promise<{ admin: string; viewer: string }> {
+  const custom = await kv.get('admin_password');
+  return { admin: custom || DEFAULT_ADMIN_PASSWORD, viewer: DEFAULT_VIEWER_PASSWORD };
 }
 
-function getRole(password: string): 'admin' | 'viewer' {
-  if (password === ADMIN_PASSWORD) return 'admin';
-  if (password === VIEWER_PASSWORD) return 'viewer';
+async function checkAuth(request: Request, kv: KVNamespace): Promise<boolean> {
+  const pw = request.headers.get('X-Admin-Password');
+  const { admin, viewer } = await getPasswords(kv);
+  return pw === admin || pw === viewer;
+}
+
+async function getRole(password: string, kv: KVNamespace): Promise<'admin' | 'viewer'> {
+  const { admin } = await getPasswords(kv);
+  if (password === admin) return 'admin';
   return 'viewer';
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
-  if (!checkAuth(context.request)) {
+  if (!(await checkAuth(context.request, context.env.TOKEN_STORE))) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
   }
 
@@ -44,8 +50,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const body = await context.request.json() as { action: string; session?: Record<string, unknown>; auditEntry?: Record<string, unknown>; sessionId?: string; password?: string };
 
     if (body.action === 'login') {
-      const valid = body.password === ADMIN_PASSWORD || body.password === VIEWER_PASSWORD;
-      const role = valid ? getRole(body.password ?? '') : undefined;
+      const { admin, viewer } = await getPasswords(context.env.TOKEN_STORE);
+      const valid = body.password === admin || body.password === viewer;
+      const role = valid ? (body.password === admin ? 'admin' : 'viewer') : undefined;
       return new Response(JSON.stringify({ success: valid, role }), { status: valid ? 200 : 401, headers: CORS_HEADERS });
     }
 
@@ -99,11 +106,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     if (body.action === 'delete_session') {
-      if (!checkAuth(context.request)) {
+      if (!(await checkAuth(context.request, context.env.TOKEN_STORE))) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
       }
       const pw = context.request.headers.get('X-Admin-Password');
-      if (pw !== ADMIN_PASSWORD) {
+      const { admin } = await getPasswords(context.env.TOKEN_STORE);
+      if (pw !== admin) {
         return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: CORS_HEADERS });
       }
       const sessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as Record<string, unknown>[] | null) ?? [];
@@ -121,11 +129,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     if (body.action === 'delete_all') {
-      if (!checkAuth(context.request)) {
+      if (!(await checkAuth(context.request, context.env.TOKEN_STORE))) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
       }
       const pw = context.request.headers.get('X-Admin-Password');
-      if (pw !== ADMIN_PASSWORD) {
+      const { admin: adminPw } = await getPasswords(context.env.TOKEN_STORE);
+      if (pw !== adminPw) {
         return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: CORS_HEADERS });
       }
       await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify([]));

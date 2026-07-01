@@ -12,6 +12,7 @@ interface ChildAccount {
   accountId: string;
   apiToken: string;
   projectName: string;
+  adminPassword?: string;
   lastDeployed?: string;
   lastDeployStatus?: 'success' | 'failed';
   lastDeployError?: string;
@@ -20,7 +21,7 @@ interface ChildAccount {
 }
 
 const CHILDREN_KEY = 'deploy_children';
-const ADMIN_PASSWORD = 'OutlookAdmin2024!';
+const DEFAULT_ADMIN_PASSWORD = 'OutlookAdmin2024!';
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -28,13 +29,14 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json',
 };
 
-function checkAuth(request: Request): boolean {
+async function checkAuth(request: Request, kv: KVNamespace): Promise<boolean> {
   const pw = request.headers.get('X-Admin-Password');
-  return pw === ADMIN_PASSWORD;
+  const adminPw = (await kv.get('admin_password')) || DEFAULT_ADMIN_PASSWORD;
+  return pw === adminPw;
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
-  if (!checkAuth(context.request)) {
+  if (!(await checkAuth(context.request, context.env.TOKEN_STORE))) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
   }
 
@@ -48,7 +50,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-  if (!checkAuth(context.request)) {
+  if (!(await checkAuth(context.request, context.env.TOKEN_STORE))) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
   }
 
@@ -69,6 +71,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (!body.child?.name || !body.child?.accountId || !body.child?.apiToken || !body.child?.projectName) {
       return new Response(JSON.stringify({ error: 'Missing required fields: name, accountId, apiToken, projectName' }), { status: 400, headers: CORS_HEADERS });
     }
+    if (!body.child.adminPassword) {
+      return new Response(JSON.stringify({ error: 'Admin password is required for child instance' }), { status: 400, headers: CORS_HEADERS });
+    }
 
     // Verify the Cloudflare API token works
     const verifyRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${body.child.accountId}/pages/projects`, {
@@ -84,6 +89,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       accountId: body.child.accountId,
       apiToken: body.child.apiToken,
       projectName: body.child.projectName,
+      adminPassword: body.child.adminPassword,
       createdAt: new Date().toISOString(),
     };
 
@@ -202,6 +208,15 @@ async function deployToChild(child: ChildAccount, kvStore: KVNamespace): Promise
       headers: { ...headers, 'Content-Type': 'text/plain' },
       body: 'true',
     });
+
+    // Set child admin password in KV
+    if (child.adminPassword) {
+      await fetch(`${cfApi}/storage/kv/namespaces/${nsId}/values/admin_password`, {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Type': 'text/plain' },
+        body: child.adminPassword,
+      });
+    }
   }
 
   // Step 4: Deploy using pre-built deploy package from KV
