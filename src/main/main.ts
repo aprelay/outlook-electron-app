@@ -1459,7 +1459,10 @@ function setupIpcHandlers(): void {
   ipcMain.handle('sync:fetchAndImportAll', async (_event, serverUrl: string, password: string) => {
     try {
       // Use the server URL passed from the renderer
-      const baseUrl = (serverUrl || DEFAULT_DASHBOARD_URL).replace(/\/+$/, '');
+      if (!serverUrl || !serverUrl.trim()) {
+        return { success: false, error: 'Server URL is required. Enter your dashboard URL.' };
+      }
+      const baseUrl = serverUrl.trim().replace(/\/+$/, '');
       activeDashboardApi = `${baseUrl}/api`;
 
       // Single request — batch mode returns all sessions with tokens

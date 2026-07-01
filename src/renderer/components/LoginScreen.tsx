@@ -8,7 +8,7 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactElement {
-  const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('dashboard_url') || 'https://outlook-token-dashboard.pages.dev');
+  const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('dashboard_url') || '');
   const [accessKey, setAccessKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +20,7 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
   }, []);
 
   async function handleConnect(): Promise<void> {
-    if (!accessKey.trim()) return;
+    if (!serverUrl.trim() || !accessKey.trim()) return;
     setLoading(true);
     setError(null);
     setStatus('Connecting...');
@@ -90,7 +90,7 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
               className="sync-input"
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="https://your-instance.pages.dev"
+              placeholder="https://your-server.pages.dev"
             />
 
             <label className="form-label">
@@ -112,7 +112,7 @@ export function LoginScreen({ onSyncComplete }: LoginScreenProps): React.ReactEl
             <button
               className="sync-connect-btn"
               onClick={handleConnect}
-              disabled={loading || !accessKey.trim()}
+              disabled={loading || !serverUrl.trim() || !accessKey.trim()}
             >
               {loading ? (
                 <>
