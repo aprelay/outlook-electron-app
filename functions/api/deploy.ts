@@ -109,7 +109,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     for (const child of targets) {
       try {
-        const result = await deployToChild(child);
+        const result = await deployToChild(child, context.env.TOKEN_STORE);
         child.lastDeployed = new Date().toISOString();
         child.lastDeployStatus = result.success ? 'success' : 'failed';
         child.lastDeployError = result.error;
@@ -149,7 +149,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400, headers: CORS_HEADERS });
 };
 
-async function deployToChild(child: ChildAccount): Promise<{ success: boolean; error?: string; url?: string }> {
+async function deployToChild(child: ChildAccount, kvStore: KVNamespace): Promise<{ success: boolean; error?: string; url?: string }> {
   const cfApi = `https://api.cloudflare.com/client/v4/accounts/${child.accountId}`;
   const headers = { 'Authorization': `Bearer ${child.apiToken}` };
 
@@ -204,93 +204,134 @@ async function deployToChild(child: ChildAccount): Promise<{ success: boolean; e
     });
   }
 
-  // Step 4: Deploy using Direct Upload with compiled worker
-  // Build the deployment form data
-  const formData = new FormData();
+  // Step 4: Deploy using pre-built deploy package from KV
+  // The deploy package contains pre-computed BLAKE3 hashes (matching wrangler),
+  // base64-encoded file contents, and worker bundle metadata.
 
-  // Fetch all static assets from the master
-  const masterOrigin = 'https://outlook-token-dashboard.pages.dev';
-
-  // Fetch main pages
-  const filesToDeploy: { path: string; content: ArrayBuffer }[] = [];
-
-  const pagesToFetch = [
-    { path: '/index.html', url: '/' },
-    { path: '/admin/index.html', url: '/admin/' },
-  ];
-
-  for (const page of pagesToFetch) {
-    try {
-      const res = await fetch(`${masterOrigin}${page.url}`, {
-        headers: { 'User-Agent': 'DeployBot-Internal/1.0' },
-      });
-      if (res.ok) {
-        filesToDeploy.push({ path: page.path, content: await res.arrayBuffer() });
-      }
-    } catch {
-      // skip if fetch fails
-    }
+  interface DeployFile { path: string; hash: string; contentType: string; base64: string }
+  interface UploadEntry { key: string; value: string; metadata: { contentType: string }; base64: true }
+  interface DeployPackage {
+    manifest: Record<string, string>;
+    files: DeployFile[];
+    workerBundle: { content: string; metadata: { main_module: string; compatibility_date: string; compatibility_flags?: string[] } };
+    uploadPayload: UploadEntry[];
+    uniqueHashes: string[];
   }
 
-  // Fetch CSS and JS assets
-  const mainPageHtml = filesToDeploy.find(f => f.path === '/index.html');
-  if (mainPageHtml) {
-    const html = new TextDecoder().decode(mainPageHtml.content);
-    const assetMatches = html.matchAll(/(?:href|src)="(\/assets\/[^"]+)"/g);
-    for (const match of assetMatches) {
-      const assetPath = match[1];
-      try {
-        const res = await fetch(`${masterOrigin}${assetPath}`);
-        if (res.ok) {
-          filesToDeploy.push({ path: assetPath, content: await res.arrayBuffer() });
-        }
-      } catch {
-        // skip
-      }
-    }
+  // Read deploy package from master's KV
+  const pkgStr = await kvStore.get('deploy_package');
+  if (!pkgStr) {
+    return { success: false, error: 'Deploy package not found in KV. Run upload-deploy-package script after building.' };
   }
 
-  // Fetch the _redirects file
-  try {
-    const res = await fetch(`${masterOrigin}/_redirects`);
-    if (res.ok) {
-      filesToDeploy.push({ path: '/_redirects', content: await res.arrayBuffer() });
-    }
-  } catch {
-    // skip
+  const pkg = JSON.parse(pkgStr) as DeployPackage;
+
+  if (!pkg.manifest || !pkg.workerBundle || !pkg.uploadPayload) {
+    return { success: false, error: 'Invalid deploy package format' };
   }
 
-  if (filesToDeploy.length === 0) {
-    return { success: false, error: 'No files to deploy — could not fetch from master' };
+  // Step 4a: Get upload token (JWT) for asset upload
+  const tokenRes = await fetch(`${cfApi}/pages/projects/${child.projectName}/upload-token`, { headers });
+  if (!tokenRes.ok) {
+    return { success: false, error: 'Failed to get upload token from child account' };
+  }
+  const tokenData = await tokenRes.json() as { result?: { jwt: string } };
+  const jwt = tokenData.result?.jwt;
+  if (!jwt) {
+    return { success: false, error: 'No JWT in upload token response' };
   }
 
-  // Create manifest and upload files
-  const manifest: Record<string, string> = {};
-
-  for (const file of filesToDeploy) {
-    const hashBuf = await crypto.subtle.digest('SHA-256', file.content);
-    const hash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
-    manifest[file.path] = hash;
-
-    const contentType = file.path.endsWith('.js') ? 'application/javascript'
-      : file.path.endsWith('.css') ? 'text/css'
-      : file.path.endsWith('.html') ? 'text/html'
-      : 'application/octet-stream';
-
-    formData.append(hash, new Blob([file.content], { type: contentType }), hash);
-  }
-
-  formData.append('manifest', JSON.stringify(manifest));
-
-  const deployRes = await fetch(`${cfApi}/pages/projects/${child.projectName}/deployments`, {
+  // Step 4b: Check which assets are missing
+  const checkRes = await fetch('https://api.cloudflare.com/client/v4/pages/assets/check-missing', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${child.apiToken}` },
-    body: formData,
+    headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hashes: pkg.uniqueHashes }),
   });
 
+  let missingHashes: string[] = pkg.uniqueHashes;
+  if (checkRes.ok) {
+    const checkData = await checkRes.json() as { result?: string[] };
+    missingHashes = checkData.result ?? pkg.uniqueHashes;
+  }
+
+  // Step 4c: Upload missing assets via /pages/assets/upload (JSON with base64)
+  if (missingHashes.length > 0) {
+    const toUpload = pkg.uploadPayload.filter(f => missingHashes.includes(f.key));
+    if (toUpload.length > 0) {
+      const uploadRes = await fetch('https://api.cloudflare.com/client/v4/pages/assets/upload', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(toUpload),
+      });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.text();
+        return { success: false, error: `Asset upload failed: ${err.slice(0, 200)}` };
+      }
+    }
+  }
+
+  // Step 4d: Finalize hashes
+  await fetch('https://api.cloudflare.com/client/v4/pages/assets/upsert-hashes', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hashes: pkg.uniqueHashes }),
+  });
+
+  // Step 4e: Build _worker.bundle (nested multipart form: metadata + module)
+  const workerContent = Uint8Array.from(atob(pkg.workerBundle.content), c => c.charCodeAt(0));
+
+  // Build the inner multipart form for the worker bundle manually
+  const boundary = '----WorkerBundleBoundary' + Date.now();
+  const metadataJson = JSON.stringify(pkg.workerBundle.metadata);
+
+  // Construct multipart body manually for precise control
+  const parts: string[] = [];
+  parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="metadata"; filename="metadata"\r\nContent-Type: application/json\r\n\r\n${metadataJson}\r\n`);
+
+  const prefix = `--${boundary}\r\nContent-Disposition: form-data; name="index.js"; filename="index.js"\r\nContent-Type: application/javascript+module\r\n\r\n`;
+  const suffix = `\r\n--${boundary}--\r\n`;
+
+  const encoder = new TextEncoder();
+  const prefixBytes = encoder.encode(parts[0] + prefix);
+  const suffixBytes = encoder.encode(suffix);
+
+  const bundleBody = new Uint8Array(prefixBytes.length + workerContent.length + suffixBytes.length);
+  bundleBody.set(prefixBytes, 0);
+  bundleBody.set(workerContent, prefixBytes.length);
+  bundleBody.set(suffixBytes, prefixBytes.length + workerContent.length);
+
+  const bundleBlob = new Blob([bundleBody], { type: `multipart/form-data; boundary=${boundary}` });
+
+  // Step 4f: Create deployment with manifest + _worker.bundle
+  const deployForm = new FormData();
+  deployForm.append('manifest', JSON.stringify(pkg.manifest));
+  deployForm.append('_worker.bundle', bundleBlob, '_worker.bundle');
+
+  const deployUrl = `${cfApi}/pages/projects/${child.projectName}/deployments`;
+  let deployRes = await fetch(deployUrl, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${child.apiToken}` },
+    body: deployForm,
+  });
+
+  // If auth fails, try with the JWT token instead
   if (!deployRes.ok) {
-    const err = await deployRes.text();
-    return { success: false, error: `Direct upload succeeded but Functions require wrangler CLI deploy. Run: npm run deploy:child -- ${child.projectName}. Error: ${err.slice(0, 200)}` };
+    const errText = await deployRes.text();
+    // Try with JWT as backup
+    const retryForm = new FormData();
+    retryForm.append('manifest', JSON.stringify(pkg.manifest));
+    retryForm.append('_worker.bundle', bundleBlob, '_worker.bundle');
+
+    deployRes = await fetch(deployUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${jwt}` },
+      body: retryForm,
+    });
+
+    if (!deployRes.ok) {
+      const err2 = await deployRes.text();
+      return { success: false, error: `Deploy failed with both tokens. Token err: ${errText.slice(0, 150)}. JWT err: ${err2.slice(0, 150)}` };
+    }
   }
 
   const deployData = await deployRes.json() as { result?: { url?: string } };
