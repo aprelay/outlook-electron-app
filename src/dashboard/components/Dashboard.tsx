@@ -7,6 +7,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { EmailsPanel } from './EmailsPanel';
 import { PagesPanel } from './PagesPanel';
 import { ImportTokenPanel } from './ImportTokenPanel';
+import { DeployPanel } from './DeployPanel';
 import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView, AdminRole } from '../types';
 
 function computeMetrics(sessions: TokenSession[], auditLog: AuditLogEntry[]): TokenMetrics {
@@ -337,6 +338,7 @@ export function Dashboard(): React.ReactElement {
             {view === 'audit' && 'Audit Log'}
             {view === 'emails' && 'Email Access'}
             {view === 'pages' && 'Pages'}
+            {view === 'deploy' && 'Deploy'}
             {view === 'settings' && 'Settings'}
           </h1>
           <div className="header-actions">
@@ -405,6 +407,7 @@ export function Dashboard(): React.ReactElement {
               {view === 'audit' && <AuditPanel logs={auditLog} />}
               {view === 'pages' && <PagesPanel storedPassword={storedPassword} />}
               {view === 'import' && <ImportTokenPanel storedPassword={storedPassword} onImportSuccess={loadData} />}
+              {view === 'deploy' && <DeployPanel storedPassword={storedPassword} />}
               {view === 'settings' && <SettingsPanel />}
             </>
           )}
