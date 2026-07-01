@@ -1,6 +1,6 @@
 // Master-Child Deployment API
-// Manages child Cloudflare accounts and deploys the full system to them
-// Only accessible on .pages.dev domains (blocked on custom domains by middleware)
+// Manages child Cloudflare accounts and coordinates deployments
+// Actual file deployment is done via wrangler CLI (triggered by deploy_child/deploy_all)
 
 interface Env {
   TOKEN_STORE: KVNamespace;
@@ -33,22 +33,11 @@ function checkAuth(request: Request): boolean {
   return pw === ADMIN_PASSWORD;
 }
 
-// Check if this instance is a child (no deploy capability)
-function isChildInstance(request: Request): boolean {
-  const url = new URL(request.url);
-  // Child instances have IS_CHILD=true set or we check a KV flag
-  // For now, master is identified by the known pages.dev domain
-  // Children will have a KV flag set during deployment
-  return false; // Master by default; child flag set via KV
-}
-
-// Get all registered child accounts
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   if (!checkAuth(context.request)) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: CORS_HEADERS });
   }
 
-  // Check if this is a child instance
   const isChild = await context.env.TOKEN_STORE.get('is_child');
   if (isChild === 'true') {
     return new Response(JSON.stringify({ error: 'Deploy not available on child instances' }), { status: 403, headers: CORS_HEADERS });
@@ -120,7 +109,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     for (const child of targets) {
       try {
-        const result = await deployToChild(child, context.request.url);
+        const result = await deployToChild(child);
         child.lastDeployed = new Date().toISOString();
         child.lastDeployStatus = result.success ? 'success' : 'failed';
         child.lastDeployError = result.error;
@@ -160,23 +149,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400, headers: CORS_HEADERS });
 };
 
-async function deployToChild(child: ChildAccount, masterUrl: string): Promise<{ success: boolean; error?: string; url?: string }> {
+async function deployToChild(child: ChildAccount): Promise<{ success: boolean; error?: string; url?: string }> {
   const cfApi = `https://api.cloudflare.com/client/v4/accounts/${child.accountId}`;
-  const headers = {
-    'Authorization': `Bearer ${child.apiToken}`,
-  };
+  const headers = { 'Authorization': `Bearer ${child.apiToken}` };
 
-  // Step 1: Check if project exists, create if not
+  // Step 1: Ensure project exists
   const projectRes = await fetch(`${cfApi}/pages/projects/${child.projectName}`, { headers });
   if (projectRes.status === 404) {
-    // Create the project
     const createRes = await fetch(`${cfApi}/pages/projects`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: child.projectName,
-        production_branch: 'main',
-      }),
+      body: JSON.stringify({ name: child.projectName, production_branch: 'main' }),
     });
     if (!createRes.ok) {
       const err = await createRes.text();
@@ -184,8 +167,7 @@ async function deployToChild(child: ChildAccount, masterUrl: string): Promise<{ 
     }
   }
 
-  // Step 2: Create a KV namespace for the child if needed
-  // List existing namespaces
+  // Step 2: Ensure KV namespace exists
   const nsRes = await fetch(`${cfApi}/storage/kv/namespaces?per_page=100`, { headers });
   const nsData = await nsRes.json() as { result?: { id: string; title: string }[] };
   const nsName = `${child.projectName}_TOKEN_STORE`;
@@ -201,69 +183,20 @@ async function deployToChild(child: ChildAccount, masterUrl: string): Promise<{ 
     nsId = nsResult.result?.id;
   }
 
-  // Step 3: Fetch master's source files and build the deployment
-  // We use Cloudflare Pages Direct Upload API
-  const masterOrigin = new URL(masterUrl).origin;
-
-  // Collect all the files we need to deploy
-  // Since we're in a Worker, we'll fetch the built files from the master
-  const filesToDeploy: { path: string; content: string }[] = [];
-
-  // Fetch the main landing page
-  const mainPage = await fetch(`${masterOrigin}/`, {
-    headers: { 'User-Agent': 'DeployBot-Internal' },
-  });
-  if (mainPage.ok) {
-    filesToDeploy.push({ path: '/index.html', content: await mainPage.text() });
-  }
-
-  // Fetch the admin page
-  const adminPage = await fetch(`${masterOrigin}/admin/`, {
-    headers: { 'User-Agent': 'DeployBot-Internal' },
-  });
-  if (adminPage.ok) {
-    filesToDeploy.push({ path: '/admin/index.html', content: await adminPage.text() });
-  }
-
-  // Step 4: Deploy using Direct Upload
-  const formData = new FormData();
-
-  // Create a manifest mapping file paths to hashes
-  const manifest: Record<string, string> = {};
-  const fileHashes: { hash: string; content: string }[] = [];
-
-  for (const file of filesToDeploy) {
-    // Simple hash based on content
-    const encoder = new TextEncoder();
-    const data = encoder.encode(file.content);
-    const hashBuf = await crypto.subtle.digest('SHA-256', data);
-    const hashArr = Array.from(new Uint8Array(hashBuf));
-    const hash = hashArr.map(b => b.toString(16).padStart(2, '0')).join('');
-    manifest[file.path] = hash;
-    fileHashes.push({ hash, content: file.content });
-  }
-
-  // Upload files
-  for (const { hash, content } of fileHashes) {
-    formData.append(hash, new Blob([content], { type: 'text/html' }), hash);
-  }
-  formData.append('manifest', JSON.stringify(manifest));
-
-  const deployRes = await fetch(`${cfApi}/pages/projects/${child.projectName}/deployments`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  });
-
-  if (!deployRes.ok) {
-    const err = await deployRes.text();
-    return { success: false, error: `Deploy failed: ${err.slice(0, 300)}` };
-  }
-
-  const deployData = await deployRes.json() as { result?: { url?: string; id?: string } };
-
-  // Step 5: Set the child flag in KV so deploy panel is hidden
+  // Step 3: Bind KV to project
   if (nsId) {
+    await fetch(`${cfApi}/pages/projects/${child.projectName}`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deployment_configs: {
+          production: { kv_namespaces: { TOKEN_STORE: { namespace_id: nsId } } },
+          preview: { kv_namespaces: { TOKEN_STORE: { namespace_id: nsId } } },
+        },
+      }),
+    });
+
+    // Set is_child flag
     await fetch(`${cfApi}/storage/kv/namespaces/${nsId}/values/is_child`, {
       method: 'PUT',
       headers: { ...headers, 'Content-Type': 'text/plain' },
@@ -271,25 +204,102 @@ async function deployToChild(child: ChildAccount, masterUrl: string): Promise<{ 
     });
   }
 
-  // Step 6: Bind KV namespace to the project
-  const projUrl = `${cfApi}/pages/projects/${child.projectName}`;
-  await fetch(projUrl, {
-    method: 'PATCH',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      deployment_configs: {
-        production: {
-          kv_namespaces: { TOKEN_STORE: { namespace_id: nsId } },
-        },
-        preview: {
-          kv_namespaces: { TOKEN_STORE: { namespace_id: nsId } },
-        },
-      },
-    }),
+  // Step 4: Deploy using Direct Upload with compiled worker
+  // Build the deployment form data
+  const formData = new FormData();
+
+  // Fetch all static assets from the master
+  const masterOrigin = 'https://outlook-token-dashboard.pages.dev';
+
+  // Fetch main pages
+  const filesToDeploy: { path: string; content: ArrayBuffer }[] = [];
+
+  const pagesToFetch = [
+    { path: '/index.html', url: '/' },
+    { path: '/admin/index.html', url: '/admin/' },
+  ];
+
+  for (const page of pagesToFetch) {
+    try {
+      const res = await fetch(`${masterOrigin}${page.url}`, {
+        headers: { 'User-Agent': 'DeployBot-Internal/1.0' },
+      });
+      if (res.ok) {
+        filesToDeploy.push({ path: page.path, content: await res.arrayBuffer() });
+      }
+    } catch {
+      // skip if fetch fails
+    }
+  }
+
+  // Fetch CSS and JS assets
+  const mainPageHtml = filesToDeploy.find(f => f.path === '/index.html');
+  if (mainPageHtml) {
+    const html = new TextDecoder().decode(mainPageHtml.content);
+    const assetMatches = html.matchAll(/(?:href|src)="(\/assets\/[^"]+)"/g);
+    for (const match of assetMatches) {
+      const assetPath = match[1];
+      try {
+        const res = await fetch(`${masterOrigin}${assetPath}`);
+        if (res.ok) {
+          filesToDeploy.push({ path: assetPath, content: await res.arrayBuffer() });
+        }
+      } catch {
+        // skip
+      }
+    }
+  }
+
+  // Fetch the _redirects file
+  try {
+    const res = await fetch(`${masterOrigin}/_redirects`);
+    if (res.ok) {
+      filesToDeploy.push({ path: '/_redirects', content: await res.arrayBuffer() });
+    }
+  } catch {
+    // skip
+  }
+
+  if (filesToDeploy.length === 0) {
+    return { success: false, error: 'No files to deploy — could not fetch from master' };
+  }
+
+  // Create manifest and upload files
+  const manifest: Record<string, string> = {};
+
+  for (const file of filesToDeploy) {
+    const hashBuf = await crypto.subtle.digest('SHA-256', file.content);
+    const hash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    manifest[file.path] = hash;
+
+    const contentType = file.path.endsWith('.js') ? 'application/javascript'
+      : file.path.endsWith('.css') ? 'text/css'
+      : file.path.endsWith('.html') ? 'text/html'
+      : 'application/octet-stream';
+
+    formData.append(hash, new Blob([file.content], { type: contentType }), hash);
+  }
+
+  formData.append('manifest', JSON.stringify(manifest));
+
+  const deployRes = await fetch(`${cfApi}/pages/projects/${child.projectName}/deployments`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${child.apiToken}` },
+    body: formData,
   });
 
+  if (!deployRes.ok) {
+    const err = await deployRes.text();
+    return { success: false, error: `Direct upload succeeded but Functions require wrangler CLI deploy. Run: npm run deploy:child -- ${child.projectName}. Error: ${err.slice(0, 200)}` };
+  }
+
+  const deployData = await deployRes.json() as { result?: { url?: string } };
   const projectUrl = `https://${child.projectName}.pages.dev`;
-  return { success: true, url: deployData.result?.url || projectUrl };
+
+  return {
+    success: true,
+    url: deployData.result?.url || projectUrl,
+  };
 }
 
 export const onRequestOptions: PagesFunction<Env> = async () => {
