@@ -320,6 +320,7 @@ async function deployToChild(child: ChildAccount, kvStore: KVNamespace): Promise
   // Step 4f: Create deployment with manifest + _worker.bundle
   const deployForm = new FormData();
   deployForm.append('manifest', JSON.stringify(pkg.manifest));
+  deployForm.append('branch', 'main');
   deployForm.append('_worker.bundle', bundleBlob, '_worker.bundle');
 
   const deployUrl = `${cfApi}/pages/projects/${child.projectName}/deployments`;
@@ -335,6 +336,7 @@ async function deployToChild(child: ChildAccount, kvStore: KVNamespace): Promise
     // Try with JWT as backup
     const retryForm = new FormData();
     retryForm.append('manifest', JSON.stringify(pkg.manifest));
+    retryForm.append('branch', 'main');
     retryForm.append('_worker.bundle', bundleBlob, '_worker.bundle');
 
     deployRes = await fetch(deployUrl, {
