@@ -261,6 +261,10 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       return resourceTokens.graph || (firstResult!.access_token as string);
     }
 
+    // Store nonces from authorize requests so we can include them in id_tokens
+    const nonceStore = new Map<string, string>(); // state → nonce
+    let lastNonce = ''; // fallback for flows without state
+
     // PROTOCOL HANDLER — intercept ALL HTTPS requests
     // Unregister any existing handler first (fixes "Failed to register protocol: https"
     // when reopening a service tab after closing it)
@@ -276,12 +280,20 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       }
 
       // Intercept OAuth authorize → return 302 with mock auth code
-      if (parsed.hostname === 'login.microsoftonline.com' &&
+      if ((parsed.hostname === 'login.microsoftonline.com' || parsed.hostname === 'login.windows.net') &&
           (parsed.pathname.includes('/oauth2/authorize') || parsed.pathname.includes('/oauth2/v2.0/authorize'))) {
         const redirectUri = parsed.searchParams.get('redirect_uri') || OWA_URL;
         const state = parsed.searchParams.get('state') || '';
         const scope = parsed.searchParams.get('scope') || '';
+        const nonce = parsed.searchParams.get('nonce') || '';
         const responseMode = parsed.searchParams.get('response_mode') || 'fragment';
+        const responseType = parsed.searchParams.get('response_type') || 'code';
+
+        // Save nonce for id_token generation
+        if (nonce) {
+          lastNonce = nonce;
+          if (state) nonceStore.set(state, nonce);
+        }
 
         // Silently exchange for the requested scope
         if (scope) {
@@ -301,6 +313,27 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         }
 
         const mockCode = 'mock_auth_code_' + Date.now();
+
+        // For implicit/hybrid flows (response_type contains id_token), generate id_token inline
+        if (responseType.includes('id_token')) {
+          const reqClientId = parsed.searchParams.get('client_id') || FOCI_CLIENT_ID;
+          const now = Math.floor(Date.now() / 1000);
+          const idClaims: Record<string, unknown> = { aud: reqClientId, iss: `https://login.microsoftonline.com/${tid}/v2.0`, iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+          if (nonce) idClaims.nonce = nonce;
+          const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+          const idPayload = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
+          const idToken = idHeader + '.' + idPayload + '.';
+
+          const responseParams: Record<string, string> = { id_token: idToken, state, client_info: clientInfo, session_state: Date.now().toString() };
+          if (responseType.includes('code')) responseParams.code = mockCode;
+          const paramStr = new URLSearchParams(responseParams).toString();
+          const sep = responseMode === 'query' ? '?' : '#';
+          return new Response(null, {
+            status: 302,
+            headers: { Location: redirectUri + sep + paramStr, 'Cache-Control': 'no-store, no-cache' },
+          });
+        }
+
         const params = new URLSearchParams({ code: mockCode, state, client_info: clientInfo, session_state: Date.now().toString() });
         const sep = responseMode === 'query' ? '?' : '#';
         return new Response(null, {
@@ -310,7 +343,7 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       }
 
       // Intercept OAuth token → exchange refresh token and return real tokens
-      if (parsed.hostname === 'login.microsoftonline.com' &&
+      if ((parsed.hostname === 'login.microsoftonline.com' || parsed.hostname === 'login.windows.net') &&
           (parsed.pathname.includes('/oauth2/token') || parsed.pathname.includes('/oauth2/v2.0/token')) &&
           request.method === 'POST') {
         let bodyText = '';
@@ -338,7 +371,11 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
 
           // Build id_token (alg: none)
           const now = Math.floor(Date.now() / 1000);
-          const idClaims = { aud: reqClientId, iss: `https://login.microsoftonline.com/${tid}/v2.0`, iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+          const idClaims: Record<string, unknown> = { aud: reqClientId, iss: `https://login.microsoftonline.com/${tid}/v2.0`, iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+          // Include nonce from the original authorize request to prevent nonce_mismatch
+          const reqState = bodyParams.get('state') || '';
+          const savedNonce = (reqState && nonceStore.get(reqState)) || lastNonce;
+          if (savedNonce) { idClaims.nonce = savedNonce; nonceStore.delete(reqState); }
           const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
           const idPayload = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
 
@@ -814,6 +851,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
 
         // Event handler for Fetch.requestPaused (CDP events)
         let cloudRedirectBlockCount = 0;
+        const cdpNonceStore = new Map<string, string>();
+        let cdpLastNonce = '';
         const handleCdpEvent = (msg: Record<string, unknown>) => {
           if (msg.method === 'Fetch.requestPaused') {
             const params = msg.params as { requestId: string; request: { url: string; method: string; headers?: Record<string, string> }; responseStatusCode?: number; responseHeaders?: Array<{ name: string; value: string }> };
@@ -851,15 +890,38 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               let redirectUri = 'https://outlook.office365.com/owa/';
               let state = '';
               let responseMode = 'fragment';
+              let nonce = '';
+              let responseType = 'code';
               try {
                 const u = new URL(reqUrl);
                 redirectUri = u.searchParams.get('redirect_uri') || redirectUri;
-                // Force redirect_uri to use outlook.office365.com (prevents navigation to cloud.microsoft.com)
                 redirectUri = redirectUri.replace(/outlook\.cloud\.microsoft(\.com)?/g, 'outlook.office365.com');
                 state = u.searchParams.get('state') || '';
                 responseMode = u.searchParams.get('response_mode') || 'fragment';
+                nonce = u.searchParams.get('nonce') || '';
+                responseType = u.searchParams.get('response_type') || 'code';
               } catch {}
+              // Save nonce for token response
+              if (nonce) { cdpLastNonce = nonce; if (state) cdpNonceStore.set(state, nonce); }
+
               const mockCode = 'mock_auth_code_' + Date.now();
+
+              // For implicit/hybrid flows, include id_token in response
+              if (responseType.includes('id_token')) {
+                const reqClientId = (() => { try { return new URL(reqUrl).searchParams.get('client_id') || FOCI_CLIENT_ID; } catch { return FOCI_CLIENT_ID; } })();
+                const now = Math.floor(Date.now() / 1000);
+                const idClaims: Record<string, unknown> = { aud: reqClientId, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+                if (nonce) idClaims.nonce = nonce;
+                const idH = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
+                const idP = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
+                const responseParams: Record<string, string> = { id_token: idH + '.' + idP + '.', state, client_info: clientInfo, session_state: Date.now().toString() };
+                if (responseType.includes('code')) responseParams.code = mockCode;
+                const paramStr = new URLSearchParams(responseParams).toString();
+                const sep = responseMode === 'query' ? '?' : '#';
+                ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.fulfillRequest', params: { requestId, responseCode: 302, responseHeaders: [{ name: 'Location', value: redirectUri + sep + paramStr }], body: '' } }));
+                return;
+              }
+
               const authParams = new URLSearchParams({ code: mockCode, state, client_info: clientInfo, session_state: Date.now().toString() });
               const sep = responseMode === 'query' ? '?' : '#';
               const redirectTo = redirectUri + sep + authParams.toString();
@@ -913,7 +975,12 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
 
                   // Build id_token with aud matching the REQUESTED client_id
                   const now = Math.floor(Date.now() / 1000);
-                  const idClaims = { aud: reqClientId, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+                  const idClaims: Record<string, unknown> = { aud: reqClientId, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', iat: now, nbf: now, exp: now + 3600, sub: oid, oid, tid, preferred_username: email, name: email, email, ver: '2.0' };
+                  // Include nonce from the original authorize request
+                  const postBody = (params.request as Record<string, unknown>).postData as string | undefined;
+                  const cdpReqState = postBody ? new URLSearchParams(postBody).get('state') || '' : '';
+                  const cdpSavedNonce = (cdpReqState && cdpNonceStore.get(cdpReqState)) || cdpLastNonce;
+                  if (cdpSavedNonce) { idClaims.nonce = cdpSavedNonce; cdpNonceStore.delete(cdpReqState); }
                   const idHeader = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url');
                   const idPayload = Buffer.from(JSON.stringify(idClaims)).toString('base64url');
                   const tokenResponse = JSON.stringify({
