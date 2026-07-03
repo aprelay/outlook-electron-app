@@ -75,4 +75,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openInChrome: () => ipcRenderer.invoke('openInChrome'),
   launchBrowserSession: (sessionId: string, service: string) =>
     ipcRenderer.invoke('launchBrowserSession', sessionId, service),
+  deleteAccount: (sessionId: string) =>
+    ipcRenderer.invoke('sync:deleteAccount', sessionId),
 });

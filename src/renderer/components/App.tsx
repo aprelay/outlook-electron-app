@@ -109,6 +109,20 @@ export function App(): React.ReactElement {
     }
   }
 
+  async function handleDeleteAccount(sessionId: string): Promise<void> {
+    try {
+      const result = await window.electronAPI.deleteAccount(sessionId);
+      if (result.success) {
+        setAccounts((prev) => prev.filter((a) => a.id !== sessionId));
+        addToast('success', `Deleted token for ${result.email || 'account'}`);
+      } else {
+        addToast('error', result.error || 'Failed to delete account');
+      }
+    } catch {
+      addToast('error', 'Failed to delete account');
+    }
+  }
+
   async function handleRefreshAll(): Promise<void> {
     setRefreshing(true);
     try {
@@ -332,6 +346,7 @@ export function App(): React.ReactElement {
           onOpenEmail={handleOpenEmail}
           onLaunchBrowser={handleLaunchBrowser}
           onRefreshAll={handleRefreshAll}
+          onDeleteAccount={handleDeleteAccount}
           refreshing={refreshing}
         />
         <ToastContainer toasts={toasts} onRemove={removeToast} />

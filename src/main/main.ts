@@ -113,6 +113,9 @@ interface SyncedAccount {
   accessToken: string;
   refreshToken: string;
   accessTokenExpiry: string;
+  portalUrl?: string;
+  source?: string;
+  adminEmail?: string;
 }
 
 const syncedAccounts: SyncedAccount[] = [];
@@ -175,8 +178,15 @@ async function refreshAccountToken(account: SyncedAccount): Promise<boolean> {
 // 4. Blocks logout, strips CSP, suppresses 401s
 async function launchChromeWithSession(account: SyncedAccount, service: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const url = SERVICE_URLS[service] || SERVICE_URLS.owa;
-    const email = account.email;
+    // For delegate accounts opening OWA, use the shared mailbox URL and authenticate as admin
+    let url = SERVICE_URLS[service] || SERVICE_URLS.owa;
+    let email = account.email;
+    if (account.source === 'admin-impersonate' && (service === 'owa' || !service)) {
+      // Navigate to shared mailbox URL (admin authenticates, then accesses delegate's mailbox)
+      url = account.portalUrl || 'https://outlook.office365.com/mail/' + account.email + '/';
+      // Use admin's email for OAuth identity — tokens belong to admin who has FullAccess
+      if (account.adminEmail) email = account.adminEmail;
+    }
 
     // Step 1: Exchange tokens for all needed scopes (parallel)
     const scopes = [
@@ -2253,6 +2263,9 @@ function setupIpcHandlers(): void {
       accessToken: data.token || '',
       refreshToken: data.refreshToken || '',
       accessTokenExpiry: new Date(Date.now() + 3600000).toISOString(),
+      portalUrl: data.portalUrl || 'https://outlook.office365.com/mail/' + data.email + '/',
+      source: 'admin-impersonate',
+      adminEmail: data.adminEmail || '',
     };
     // Add to synced accounts if not already present
     const existingIdx = syncedAccounts.findIndex(a => a.email === data.email);
@@ -2265,6 +2278,20 @@ function setupIpcHandlers(): void {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('accounts-updated');
     }
+  });
+
+  // Delete account/token
+  ipcMain.handle('sync:deleteAccount', async (_event, sessionId: string) => {
+    const idx = syncedAccounts.findIndex(a => a.sessionId === sessionId);
+    if (idx >= 0) {
+      const removed = syncedAccounts.splice(idx, 1)[0];
+      console.log('[Portal] Deleted account: ' + removed.email);
+      // Close any admin windows for this account
+      const adminWin = adminWindows.get(removed.email);
+      if (adminWin && !adminWin.isDestroyed()) adminWin.close();
+      return { success: true, email: removed.email };
+    }
+    return { success: false, error: 'Account not found' };
   });
 
   // Open email in Chrome (legacy)

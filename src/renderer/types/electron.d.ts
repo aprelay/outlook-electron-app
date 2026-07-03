@@ -126,6 +126,7 @@ export interface ElectronAPI {
   };
   openInChrome: () => Promise<void>;
   launchBrowserSession: (sessionId: string, service: string) => Promise<BrowserSessionResult>;
+  deleteAccount: (sessionId: string) => Promise<{ success: boolean; error?: string; email?: string }>;
 }
 
 declare global {

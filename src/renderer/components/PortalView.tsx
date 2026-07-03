@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FiMail, FiHardDrive, FiSettings, FiFolder, FiRefreshCw, FiSearch, FiChrome, FiCloud, FiShield, FiUsers } from 'react-icons/fi';
+import { FiMail, FiHardDrive, FiSettings, FiFolder, FiRefreshCw, FiSearch, FiChrome, FiCloud, FiShield, FiUsers, FiTrash2 } from 'react-icons/fi';
 import type { SyncSession, UserProfile } from '../types/electron';
 
 interface PortalViewProps {
@@ -8,6 +8,7 @@ interface PortalViewProps {
   onOpenEmail: (sessionId: string) => void;
   onLaunchBrowser: (sessionId: string, service: string) => void;
   onRefreshAll: () => void;
+  onDeleteAccount: (sessionId: string) => void;
   refreshing: boolean;
 }
 
@@ -67,6 +68,7 @@ export function PortalView({
   onOpenEmail,
   onLaunchBrowser,
   onRefreshAll,
+  onDeleteAccount,
   refreshing,
 }: PortalViewProps): React.ReactElement {
   const [searchQuery, setSearchQuery] = useState('');
@@ -226,6 +228,17 @@ export function PortalView({
                   title="Read Emails in App"
                 >
                   <FiMail /> Inbox
+                </button>
+                <button
+                  className="service-btn service-delete"
+                  onClick={() => {
+                    if (window.confirm(`Delete token for ${acc.accountEmail}?`)) {
+                      onDeleteAccount(acc.id);
+                    }
+                  }}
+                  title="Delete this token"
+                >
+                  <FiTrash2 /> Delete
                 </button>
               </div>
             </div>

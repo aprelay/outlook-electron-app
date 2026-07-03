@@ -2006,6 +2006,16 @@ a {
   background: rgba(99, 102, 241, 0.2);
 }
 
+.service-btn.service-delete {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.service-btn.service-delete:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
 .portal-empty {
   text-align: center;
   color: #6b6b7e;
