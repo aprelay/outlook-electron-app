@@ -1023,8 +1023,15 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             // NOTE: portal.azure.com, entra.microsoft.com, admin.microsoft.com are UI domains — do NOT inject Bearer
             if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com') || reqUrl.includes('management.azure.com') || reqUrl.includes('vault.azure.net') || reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac.mspim.azure.com') || reqUrl.includes('iam.ad.ext.azure.com')) {
               const existingHeaders = params.request.headers || {};
+              // If the page's own MSAL already added an Authorization header, let the request through
+              // unmodified — replacing headers via CDP can strip internal browser headers and cause status:0
+              const hasExistingAuth = Object.entries(existingHeaders).some(([n]) => n.toLowerCase() === 'authorization');
+              if (hasExistingAuth) {
+                ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId } }));
+                return;
+              }
+              // No Authorization header — inject our token
               const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
-              // Pick the right token for the domain
               let bearerToken = owaToken;
               if (reqUrl.includes('graph.microsoft.com')) bearerToken = resourceTokens.graph || graphToken;
               else if (reqUrl.includes('substrate')) bearerToken = resourceTokens.substrate || owaToken;
@@ -1032,10 +1039,11 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               else if (reqUrl.includes('vault.azure.net')) bearerToken = resourceTokens.keyvault || resourceTokens.azure || owaToken;
               else if (reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac') || reqUrl.includes('iam.ad.ext')) bearerToken = resourceTokens.graph || owaToken;
               else bearerToken = resourceTokens.outlook || owaToken;
-              if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
-                headerList.push({ name: 'Authorization', value: 'Bearer ' + bearerToken });
-              }
-              headerList.push({ name: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0' });
+              headerList.push({ name: 'Authorization', value: 'Bearer ' + bearerToken });
+              // Replace User-Agent instead of duplicating
+              const uaIdx = headerList.findIndex(h => h.name.toLowerCase() === 'user-agent');
+              if (uaIdx >= 0) headerList[uaIdx].value = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0';
+              else headerList.push({ name: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2478.0' });
               ws.send(JSON.stringify({ id: ++msgId, method: 'Fetch.continueRequest', params: { requestId, headers: headerList } }));
               return;
             }
