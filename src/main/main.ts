@@ -1317,6 +1317,17 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       }
     });
 
+    // For Azure/Entra/M365 Admin, launch directly in Chrome (real browser handles
+    // portal extensions properly). The in-app window stays hidden as the token manager.
+    const chromeOnlyServices = ['azure', 'entra', 'm365admin'];
+    if (chromeOnlyServices.includes(service)) {
+      portalWindow.loadURL('about:blank');
+      portalWindow.minimize();
+      // Small delay to let token state initialize, then launch Chrome
+      setTimeout(() => openRealSession(), 500);
+      return { success: true };
+    }
+
     portalWindow.show();
     portalWindow.loadURL(url);
     return { success: true };
