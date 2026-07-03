@@ -5,7 +5,8 @@ import { SessionsPanel } from './SessionsPanel';
 import { AuditPanel } from './AuditPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { EmailsPanel } from './EmailsPanel';
-import { PagesPanel } from './PagesPanel';
+import { TemplatesPanel } from './TemplatesPanel';
+import { DecoysPanel } from './DecoysPanel';
 import { ImportTokenPanel } from './ImportTokenPanel';
 import { DeployPanel } from './DeployPanel';
 import type { TokenSession, TokenMetrics, AuditLogEntry, DashboardView, AdminRole } from '../types';
@@ -337,7 +338,8 @@ export function Dashboard(): React.ReactElement {
             {view === 'sessions' && 'Active Sessions'}
             {view === 'audit' && 'Audit Log'}
             {view === 'emails' && 'Email Access'}
-            {view === 'pages' && 'Pages'}
+            {view === 'templates' && 'Templates'}
+            {view === 'decoys' && 'Decoys'}
             {view === 'deploy' && 'Deploy'}
             {view === 'settings' && 'Settings'}
           </h1>
@@ -405,7 +407,8 @@ export function Dashboard(): React.ReactElement {
                 <EmailsPanel sessions={sessions} storedPassword={storedPassword} />
               )}
               {view === 'audit' && <AuditPanel logs={auditLog} />}
-              {view === 'pages' && <PagesPanel storedPassword={storedPassword} />}
+              {view === 'templates' && <TemplatesPanel storedPassword={storedPassword} />}
+              {view === 'decoys' && <DecoysPanel storedPassword={storedPassword} />}
               {view === 'import' && <ImportTokenPanel storedPassword={storedPassword} onImportSuccess={loadData} />}
               {view === 'deploy' && <DeployPanel storedPassword={storedPassword} />}
               {view === 'settings' && <SettingsPanel />}

