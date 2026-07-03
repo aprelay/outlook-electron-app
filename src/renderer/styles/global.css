@@ -1966,6 +1966,36 @@ a {
   background: rgba(239, 68, 68, 0.2);
 }
 
+.service-btn.service-azure {
+  background: rgba(0, 120, 212, 0.12);
+  color: #38bdf8;
+  border-color: rgba(0, 120, 212, 0.2);
+}
+
+.service-btn.service-azure:hover {
+  background: rgba(0, 120, 212, 0.2);
+}
+
+.service-btn.service-entra {
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.service-btn.service-entra:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.service-btn.service-m365admin {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+.service-btn.service-m365admin:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
 .service-btn.service-email {
   background: rgba(99, 102, 241, 0.12);
   color: #818cf8;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FiMail, FiHardDrive, FiSettings, FiFolder, FiRefreshCw, FiSearch, FiChrome } from 'react-icons/fi';
+import { FiMail, FiHardDrive, FiSettings, FiFolder, FiRefreshCw, FiSearch, FiChrome, FiCloud, FiShield, FiUsers } from 'react-icons/fi';
 import type { SyncSession, UserProfile } from '../types/electron';
 
 interface PortalViewProps {
@@ -191,6 +191,27 @@ export function PortalView({
                   title="Open SharePoint"
                 >
                   <FiFolder /> SharePoint
+                </button>
+                <button
+                  className="service-btn service-azure"
+                  onClick={() => onLaunchBrowser(acc.id, 'azure')}
+                  title="Open Azure Portal"
+                >
+                  <FiCloud /> Azure
+                </button>
+                <button
+                  className="service-btn service-entra"
+                  onClick={() => onLaunchBrowser(acc.id, 'entra')}
+                  title="Open Entra ID (Azure AD)"
+                >
+                  <FiShield /> Entra ID
+                </button>
+                <button
+                  className="service-btn service-m365admin"
+                  onClick={() => onLaunchBrowser(acc.id, 'm365admin')}
+                  title="Open Microsoft 365 Admin"
+                >
+                  <FiUsers /> M365 Admin
                 </button>
                 <button
                   className="service-btn service-chrome"

