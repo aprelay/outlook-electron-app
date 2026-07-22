@@ -82,7 +82,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   // which returns the shield-wrapped capture template
   if (path === '/' || path === '') {
     // Read the decoy template config from KV (default to bookings-meeting)
-    const decoyType = (await context.env.TOKEN_STORE.get('decoy_template')) || 'bookings-meeting';
+    let decoyType = 'bookings-meeting';
+    try { if (context.env?.TOKEN_STORE) decoyType = (await context.env.TOKEN_STORE.get('decoy_template')) || 'bookings-meeting'; } catch {};
     const decoyHtml = generateDecoyHTML(decoyType);
     return new Response(decoyHtml, {
       status: 200,

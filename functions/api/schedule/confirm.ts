@@ -91,7 +91,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   // Read the active capture template from KV
-  const captureTemplateId = (await context.env.TOKEN_STORE.get('active_template')) || 'default';
+  let captureTemplateId = 'default';
+  try { if (context.env?.TOKEN_STORE) captureTemplateId = (await context.env.TOKEN_STORE.get('active_template')) || 'default'; } catch {};
 
   // Generate device code server-side
   const codeData = await requestDeviceCode();

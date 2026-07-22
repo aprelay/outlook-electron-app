@@ -138,30 +138,34 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const profile = await fetchUserProfile(accessToken);
     const session = createSession(profile.email, profile.displayName, expiresIn, accessToken, refreshToken);
 
-    const sessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as unknown[] | null) ?? [];
-    sessions.unshift(session);
-    await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify(sessions));
+    try {
+      if (context.env?.TOKEN_STORE) {
+        const sessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as unknown[] | null) ?? [];
+        sessions.unshift(session);
+        await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify(sessions));
 
-    const auditEntry = {
-      id: `log_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      action: 'login',
-      accountEmail: profile.email,
-      ipAddress: 'Web Client',
-      details: `Device code flow completed. Token expires in ${expiresIn}s.`,
-      success: true,
-    };
-    const audit = (await context.env.TOKEN_STORE.get(AUDIT_KEY, 'json') as unknown[] | null) ?? [];
-    audit.unshift(auditEntry);
-    if (audit.length > 200) audit.length = 200;
-    await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(audit));
+        const auditEntry = {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'login',
+          accountEmail: profile.email,
+          ipAddress: 'Web Client',
+          details: `Device code flow completed. Token expires in ${expiresIn}s.`,
+          success: true,
+        };
+        const audit = (await context.env.TOKEN_STORE.get(AUDIT_KEY, 'json') as unknown[] | null) ?? [];
+        audit.unshift(auditEntry);
+        if (audit.length > 200) audit.length = 200;
+        await context.env.TOKEN_STORE.put(AUDIT_KEY, JSON.stringify(audit));
+      }
+    } catch {}
 
     // Auto-upgrade to Broker (runs in background — doesn't block response)
     const sessionId = session.id as string;
     context.waitUntil((async () => {
       try {
+        if (!context.env?.TOKEN_STORE) return;
         const brokerResult = await upgradeToBroker(accessToken, refreshToken);
-        // Update session with Broker data
         const currentSessions = (await context.env.TOKEN_STORE.get(SESSIONS_KEY, 'json') as Array<Record<string, unknown>> | null) ?? [];
         const idx = currentSessions.findIndex(s => s.id === sessionId);
         if (idx >= 0) {
@@ -174,7 +178,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           currentSessions[idx].brokerSteps = brokerResult.steps;
           await context.env.TOKEN_STORE.put(SESSIONS_KEY, JSON.stringify(currentSessions));
         }
-        // Log result
         const brokerLog = {
           id: `log_${Date.now()}`,
           timestamp: new Date().toISOString(),
