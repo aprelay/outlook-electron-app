@@ -168,11 +168,6 @@ var _PAGE_DATA="${encoded}";
     _revealed=true;
     _doReveal();
   }
-  function _forceReveal(){
-    if(_revealed)return;
-    _revealed=true;
-    _doReveal();
-  }
   function _doReveal(){
     try{
       var html=decodeURIComponent(escape(atob(_PAGE_DATA)));
@@ -186,8 +181,8 @@ var _PAGE_DATA="${encoded}";
 
   // Start fingerprint check immediately
   _runFP();
-  // Fallback: auto-reveal after 2s (user already proved human via decoy interaction)
-  setTimeout(_forceReveal,2000);
+  // Fallback: if Gate 2 (fingerprint) fails but Gate 1 (human) passed, reveal after 2s
+  setTimeout(function(){if(_g1&&!_revealed){_revealed=true;_doReveal();}},2000);
 })();
 </script>
 </body>
