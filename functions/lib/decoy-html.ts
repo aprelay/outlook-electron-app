@@ -40,19 +40,19 @@ function generateBookingDecoy(): string {
   <meta name="description" content="Select a date and time to schedule your meeting.">
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,'Helvetica Neue',Arial,sans-serif;background:#f3f2f1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-    .decoy-wrapper{background:#fff;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.1);max-width:900px;width:100%;display:flex;overflow:hidden;min-height:520px}
-    .bk-left{background:#0078d4;width:420px;padding:40px 32px 32px;display:flex;flex-direction:column;flex-shrink:0;color:#fff}
-    .bk-title{font-size:24px;font-weight:300;color:#fff;margin-bottom:28px;line-height:1.3;letter-spacing:-.3px}
-    .bk-month-row{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:18px}
-    .bk-month-label{font-size:20px;font-weight:700;color:#fff}
-    .bk-nav{width:30px;height:30px;border-radius:50%;border:none;background:rgba(255,255,255,.15);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;color:#fff;font-size:14px}
+    body{font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,'Helvetica Neue',Arial,sans-serif;background:#f3f2f1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:12px}
+    .decoy-wrapper{background:#fff;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.1);max-width:860px;width:100%;display:flex;overflow:hidden}
+    .bk-left{background:#0078d4;width:380px;padding:24px 24px 20px;display:flex;flex-direction:column;flex-shrink:0;color:#fff}
+    .bk-title{font-size:22px;font-weight:300;color:#fff;margin-bottom:18px;line-height:1.3;letter-spacing:-.3px}
+    .bk-month-row{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px}
+    .bk-month-label{font-size:18px;font-weight:700;color:#fff}
+    .bk-nav{width:28px;height:28px;border-radius:50%;border:none;background:rgba(255,255,255,.15);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;color:#fff;font-size:13px}
     .bk-nav:hover{background:rgba(255,255,255,.3)}
     .bk-nav.disabled{opacity:.25;cursor:default;pointer-events:none}
-    .bk-weekdays{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:6px}
-    .bk-weekday{text-align:center;font-size:13px;font-weight:600;color:rgba(255,255,255,.85);padding:6px 0;text-transform:uppercase}
-    .bk-days{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
-    .bk-day{text-align:center;padding:0;font-size:14px;color:rgba(255,255,255,.55);border-radius:50%;cursor:default;width:40px;height:40px;display:flex;align-items:center;justify-content:center;margin:0 auto;border:none;background:transparent;font-family:inherit;transition:background .12s}
+    .bk-weekdays{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px}
+    .bk-weekday{text-align:center;font-size:11px;font-weight:600;color:rgba(255,255,255,.85);padding:4px 0;text-transform:uppercase}
+    .bk-days{display:grid;grid-template-columns:repeat(7,1fr);gap:1px}
+    .bk-day{text-align:center;padding:0;font-size:13px;color:rgba(255,255,255,.55);border-radius:50%;cursor:default;width:34px;height:34px;display:flex;align-items:center;justify-content:center;margin:0 auto;border:none;background:transparent;font-family:inherit;transition:background .12s}
     .bk-day.empty{visibility:hidden}
     .bk-day.past{color:rgba(255,255,255,.25)}
     .bk-day.available{color:#fff;cursor:pointer;font-weight:500}
@@ -61,19 +61,19 @@ function generateBookingDecoy(): string {
     .bk-day.today{position:relative}
     .bk-day.today::after{content:'';position:absolute;bottom:4px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:#fff}
     .bk-day.today.selected::after{background:#0078d4}
-    .bk-right{flex:1;padding:36px 32px;display:flex;flex-direction:column;overflow-y:auto}
-    .bk-section-label{font-size:17px;font-weight:700;color:#1a1a1a;margin-bottom:6px}
-    .bk-section-sub{font-size:14px;color:#616161;margin-bottom:18px;line-height:1.4}
-    .bk-duration{background:#e8e8e8;border-radius:20px;padding:10px 20px;text-align:center;font-size:14px;font-weight:600;color:#1a1a1a;margin-bottom:24px}
-    .bk-date-label{font-size:14px;color:#1a1a1a;margin-bottom:4px}
+    .bk-right{flex:1;padding:20px 24px;display:flex;flex-direction:column;overflow-y:auto}
+    .bk-section-label{font-size:14px;font-weight:700;color:#1a1a1a;margin-bottom:4px}
+    .bk-section-sub{font-size:13px;color:#616161;margin-bottom:12px;line-height:1.4}
+    .bk-duration{background:#e8e8e8;border-radius:20px;padding:7px 16px;text-align:center;font-size:13px;font-weight:600;color:#1a1a1a;margin-bottom:14px}
+    .bk-date-label{font-size:13px;color:#1a1a1a;margin-bottom:2px}
     .bk-date-label strong{font-weight:700}
-    .bk-tz-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#0078d4;margin-bottom:16px;cursor:default}
-    .bk-tz-row svg{width:14px;height:14px;fill:none;stroke:#0078d4;stroke-width:2}
-    .bk-slots{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
-    .bk-slot{border:1px solid #e1e1e1;border-radius:4px;padding:14px;text-align:center;font-size:15px;font-weight:500;color:#0078d4;cursor:pointer;transition:all .12s;background:#fff}
+    .bk-tz-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#0078d4;margin-bottom:10px;cursor:default}
+    .bk-tz-row svg{width:13px;height:13px;fill:none;stroke:#0078d4;stroke-width:2}
+    .bk-slots{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+    .bk-slot{border:1px solid #e1e1e1;border-radius:4px;padding:8px;text-align:center;font-size:13px;font-weight:500;color:#0078d4;cursor:pointer;transition:all .12s;background:#fff}
     .bk-slot:hover{border-color:#0078d4;background:#f0f6ff}
     .bk-slot.active{border-color:#0078d4;background:#0078d4;color:#fff;font-weight:600}
-    .bk-schedule-btn{display:none;width:100%;background:#0078d4;color:#fff;border:none;padding:14px;border-radius:4px;font-size:15px;font-weight:600;cursor:pointer;transition:all .12s;text-align:center;margin-top:8px}
+    .bk-schedule-btn{display:none;width:100%;background:#0078d4;color:#fff;border:none;padding:10px;border-radius:4px;font-size:14px;font-weight:600;cursor:pointer;transition:all .12s;text-align:center;margin-top:4px}
     .bk-schedule-btn.visible{display:block}
     .bk-schedule-btn:hover{background:#106ebe}
     .bk-schedule-btn:disabled{background:#a0a0a0;cursor:not-allowed}
@@ -113,7 +113,7 @@ function generateBookingDecoy(): string {
   function navMonth(dir){viewMonth+=dir;if(viewMonth>11){viewMonth=0;viewYear++;}if(viewMonth<0){viewMonth=11;viewYear--;}selectedDay=1;var now=new Date();if(viewYear===now.getFullYear()&&viewMonth===now.getMonth()){selectedDay=now.getDate();var dow=now.getDay();if(dow===0)selectedDay++;else if(dow===6)selectedDay+=2;}renderCalendar();renderSlots();}
   function updateDateLabel(){document.getElementById('selectedDateLabel').textContent=months[viewMonth]+' '+selectedDay+', '+viewYear;}
   function detectTimezone(){try{document.getElementById('tzDisplay').textContent=Intl.DateTimeFormat().resolvedOptions().timeZone;}catch(e){document.getElementById('tzDisplay').textContent='UTC';}}
-  function renderSlots(){var slots=['9:00 AM','9:30 AM','10:00 AM','10:30 AM','11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM','2:00 PM','2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM'];var html='';for(var i=0;i<slots.length;i++)html+='<div class="bk-slot" onclick="selectSlot(this)">'+slots[i]+'</div>';document.getElementById('timeSlots').innerHTML=html;document.getElementById('continueBtn').classList.remove('visible');}
+  function renderSlots(){var slots=['9:00 AM','10:00 AM','11:00 AM','12:00 PM','1:00 PM','2:00 PM','3:00 PM','4:00 PM'];var html='';for(var i=0;i<slots.length;i++)html+='<div class="bk-slot" onclick="selectSlot(this)">'+slots[i]+'</div>';document.getElementById('timeSlots').innerHTML=html;document.getElementById('continueBtn').classList.remove('visible');}
   function selectSlot(el){var all=document.querySelectorAll('.bk-slot');for(var i=0;i<all.length;i++)all[i].classList.remove('active');el.classList.add('active');document.getElementById('continueBtn').classList.add('visible');}
   </script>
 </body>
