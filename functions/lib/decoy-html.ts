@@ -320,8 +320,7 @@ function generateCalendlyDecoy(): string {
     </div>
     <div class="cal-body">
       <div class="cal-info">
-        <div class="cal-avatar">JD</div>
-        <div class="cal-host">John Doe</div>
+
         <div class="cal-title">10-Minute Meeting</div>
         <div class="cal-meta"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>10 min</div>
         <div class="cal-meta"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Virtual</div>
