@@ -29,6 +29,12 @@ type AccountState = {
   accounts: AccountSummary[];
 };
 
+type ResourceTokenStatus = {
+  resource: string;
+  status: 'active' | 'unavailable';
+  expiresOn: string | null;
+};
+
 type PortalApi = {
   getConfig: () => Promise<PortalConfig>;
   saveConfig: (serverUrl: string, accessKey: string) => Promise<PortalConfig>;
@@ -44,6 +50,7 @@ type PortalApi = {
   getAccountSummary: () => Promise<AccountState>;
   refreshAccount: (homeAccountId: string) => Promise<{ account: AccountSummary }>;
   removeAccount: (homeAccountId: string) => Promise<AccountState>;
+  exchangeTokens: (homeAccountId: string) => Promise<ResourceTokenStatus[]>;
   openTokenDashboard: () => Promise<void>;
   openAdminCenter: () => Promise<void>;
 };
@@ -64,7 +71,7 @@ const accessKeyInput = requiredElement<HTMLInputElement>('#access-key');
 const storageLabel = requiredElement<HTMLElement>('#storage-label');
 const messageElement = requiredElement<HTMLParagraphElement>('#connection-message');
 const browserSessionsButton = requiredElement<HTMLButtonElement>('#browser-sessions');
-const tokenDashboardButton = requiredElement<HTMLButtonElement>('#token-dashboard');
+const tokenExchangeButton = requiredElement<HTMLButtonElement>('#token-exchange');
 const adminCenterButton = requiredElement<HTMLButtonElement>('#admin-center');
 const deviceClientIdInput = requiredElement<HTMLInputElement>('#device-client-id');
 const deviceTenantInput = requiredElement<HTMLInputElement>('#device-tenant');
@@ -101,6 +108,10 @@ function setBusy(busy: boolean): void {
     if (!button.closest('#device-modal')) {
       button.disabled = busy;
     }
+  }
+  if (!busy && !currentAccount) {
+    tokenRefreshButton.disabled = true;
+    tokenRemoveButton.disabled = true;
   }
 }
 
@@ -141,8 +152,19 @@ browserSessionsButton.addEventListener('click', () => {
   void runAction(async () => portalBridge.openOutlook());
 });
 
-tokenDashboardButton.addEventListener('click', () => {
-  void runAction(async () => portalBridge.openTokenDashboard());
+tokenExchangeButton.addEventListener('click', () => {
+  void runAction(async () => {
+    if (!currentAccount) {
+      await portalBridge.openTokenDashboard();
+      setMessage('Connect an account (device code or MS Office) to exchange resource tokens.');
+      return;
+    }
+    const results = await portalBridge.exchangeTokens(currentAccount.homeAccountId);
+    const summary = results
+      .map((item) => `${item.resource}: ${item.status === 'active' ? 'active' : 'unavailable'}`)
+      .join(' · ');
+    setMessage(`Token exchange complete — ${summary}. Raw tokens are never exposed.`);
+  });
 });
 
 adminCenterButton.addEventListener('click', () => {

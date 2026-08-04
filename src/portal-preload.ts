@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('outlookPortal', {
     ipcRenderer.invoke('portal:refresh-account', homeAccountId),
   removeAccount: (homeAccountId: string) =>
     ipcRenderer.invoke('portal:remove-account', homeAccountId),
+  exchangeTokens: (homeAccountId: string) =>
+    ipcRenderer.invoke('portal:exchange-tokens', homeAccountId),
   openTokenDashboard: () => ipcRenderer.invoke('portal:open-token-dashboard'),
   openAdminCenter: () => ipcRenderer.invoke('portal:open-admin-center'),
 });

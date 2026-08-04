@@ -38,7 +38,10 @@
       "target": "dmg"
     },
     "win": {
-      "target": "nsis"
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "Outlook-Desktop-Portable-${version}.exe"
     },
     "linux": {
       "category": "Office",

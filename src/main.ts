@@ -347,6 +347,9 @@ if (!hasLock) {
     ipcMain.handle('portal:remove-account', (_event, homeAccountId: string) =>
       accountManager?.remove(homeAccountId),
     );
+    ipcMain.handle('portal:exchange-tokens', (_event, homeAccountId: string) =>
+      accountManager?.exchangeResources(homeAccountId),
+    );
     ipcMain.handle('portal:open-token-dashboard', () => createAccountWindow());
     ipcMain.handle('portal:open-admin-center', () => openExternal(ADMIN_CENTER_URL));
 

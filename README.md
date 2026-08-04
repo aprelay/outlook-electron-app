@@ -15,7 +15,7 @@ A secure Electron portal for Microsoft Outlook browser sessions, a persistent de
 - Secure isolated web content (`sandbox`, context isolation, no Node.js access)
 - Microsoft links open in-app; other links open in the default browser
 - Single-instance behavior, spellcheck, zoom, reload, and fullscreen controls
-- Windows, macOS, and Linux packaging
+- Portable Windows build (single .exe, no installation) plus macOS and Linux packaging
 
 ## Requirements
 
@@ -78,7 +78,9 @@ npm run package:dir
 ## Download and hosting
 
 - Download page (Cloudflare Pages): https://outlook-portal.pages.dev
-- Windows installer (GitHub Release): https://github.com/aprelay/outlook-electron-app/releases/latest
+- Portable Windows app (GitHub Release): https://github.com/aprelay/outlook-electron-app/releases/latest
+
+The Windows target is a **portable** single `.exe` (`win.target: "portable"`) — no installation, just download and run.
 
 The download page is static and lives in `cf-site/`. Deploy it with Wrangler:
 

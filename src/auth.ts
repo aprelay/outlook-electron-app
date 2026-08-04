@@ -13,6 +13,19 @@ const DEFAULT_TENANT = 'organizations';
 const MAIL_SCOPES = ['User.Read', 'Mail.ReadWrite', 'Mail.Send', 'offline_access'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const RESOURCE_SCOPES: { resource: string; scopes: string[] }[] = [
+  { resource: 'Outlook Mail', scopes: ['Mail.ReadWrite', 'Mail.Send'] },
+  { resource: 'Microsoft Graph', scopes: ['User.Read'] },
+  { resource: 'Microsoft Teams', scopes: ['https://graph.microsoft.com/Chat.Read'] },
+  { resource: 'OneDrive', scopes: ['Files.ReadWrite'] },
+];
+
+export type ResourceTokenStatus = {
+  resource: string;
+  status: 'active' | 'unavailable';
+  expiresOn: string | null;
+};
+
 type DeviceCodeResponse = {
   userCode: string;
   deviceCode: string;
@@ -232,6 +245,35 @@ export class MicrosoftAccountManager {
       await this.persistLifecycle();
       throw error;
     }
+  }
+
+  async exchangeResources(homeAccountId: string): Promise<ResourceTokenStatus[]> {
+    const application = this.requireApplication();
+    const account = await application.getTokenCache().getAccountByHomeId(homeAccountId);
+    if (!account) {
+      throw new Error('That account is no longer available.');
+    }
+
+    const results: ResourceTokenStatus[] = [];
+    for (const entry of RESOURCE_SCOPES) {
+      try {
+        const result = await application.acquireTokenSilent({
+          account,
+          scopes: entry.scopes,
+        });
+        results.push({
+          resource: entry.resource,
+          status: 'active',
+          expiresOn: result.expiresOn?.toISOString() ?? null,
+        });
+      } catch {
+        results.push({ resource: entry.resource, status: 'unavailable', expiresOn: null });
+      }
+    }
+
+    this.addAudit('refreshed', account.username, results.some((item) => item.status === 'active'));
+    await this.persistLifecycle();
+    return results;
   }
 
   async remove(homeAccountId: string): Promise<AccountState> {
