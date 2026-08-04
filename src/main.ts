@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, shell, session } from 'electron';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { MicrosoftAccountManager } from './auth';
 
 const OUTLOOK_URL = 'https://outlook.office.com/mail/';
 const TRUSTED_HOSTS = [
@@ -12,6 +14,8 @@ const TRUSTED_HOSTS = [
 ];
 
 let mainWindow: BrowserWindow | null = null;
+let accountWindow: BrowserWindow | null = null;
+let accountManager: MicrosoftAccountManager | null = null;
 
 function isTrustedUrl(rawUrl: string): boolean {
   try {
@@ -51,6 +55,11 @@ function createMenu(): void {
           label: 'Open Outlook',
           accelerator: 'CmdOrCtrl+Shift+O',
           click: () => void mainWindow?.loadURL(OUTLOOK_URL),
+        },
+        {
+          label: 'Microsoft Account',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => createAccountWindow(),
         },
         { type: 'separator' },
         process.platform === 'darwin'
@@ -103,7 +112,6 @@ function createWindow(): void {
     title: 'Outlook Desktop',
     autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
       partition: 'persist:outlook',
       contextIsolation: true,
       nodeIntegration: false,
@@ -129,7 +137,6 @@ function createWindow(): void {
       overrideBrowserWindowOptions: {
         parent: mainWindow ?? undefined,
         webPreferences: {
-          preload: path.join(__dirname, 'preload.js'),
           partition: 'persist:outlook',
           contextIsolation: true,
           nodeIntegration: false,
@@ -157,6 +164,46 @@ function createWindow(): void {
   void mainWindow.loadURL(OUTLOOK_URL);
 }
 
+function createAccountWindow(): void {
+  if (accountWindow) {
+    accountWindow.show();
+    accountWindow.focus();
+    return;
+  }
+
+  accountWindow = new BrowserWindow({
+    width: 820,
+    height: 840,
+    minWidth: 680,
+    minHeight: 620,
+    parent: mainWindow ?? undefined,
+    title: 'Microsoft Account Manager',
+    backgroundColor: '#f4f7fb',
+    webPreferences: {
+      preload: path.join(__dirname, 'account-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+
+  accountWindow.on('closed', () => {
+    accountWindow = null;
+  });
+  const accountPageUrl = pathToFileURL(path.join(__dirname, 'account', 'index.html')).toString();
+  accountWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternal(url);
+    return { action: 'deny' };
+  });
+  accountWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== accountPageUrl) {
+      event.preventDefault();
+    }
+  });
+  void accountWindow.loadURL(accountPageUrl);
+}
+
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
   app.quit();
@@ -174,8 +221,10 @@ if (!hasLock) {
     mainWindow.focus();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     app.setAppUserModelId('com.aprelay.outlookdesktop');
+    accountManager = new MicrosoftAccountManager();
+    await accountManager.initialize();
 
     const outlookSession = session.fromPartition('persist:outlook');
     outlookSession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -189,6 +238,29 @@ if (!hasLock) {
       }
       return undefined;
     });
+    ipcMain.handle('account:get-state', () => accountManager?.getState());
+    ipcMain.handle('account:save-config', (_event, config: { clientId: string; tenantId: string }) =>
+      accountManager?.saveConfig(config),
+    );
+    ipcMain.handle('account:sign-in', async (event) => {
+      if (!accountManager) {
+        throw new Error('Account manager is not ready.');
+      }
+      return accountManager.signIn((response) => {
+        event.sender.send('account:device-code', {
+          userCode: response.userCode,
+          verificationUri: response.verificationUri,
+          expiresIn: response.expiresIn,
+          message: response.message,
+        });
+      });
+    });
+    ipcMain.handle('account:refresh', (_event, homeAccountId: string) =>
+      accountManager?.refresh(homeAccountId),
+    );
+    ipcMain.handle('account:remove', (_event, homeAccountId: string) =>
+      accountManager?.remove(homeAccountId),
+    );
 
     createMenu();
     createWindow();

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Microsoft Account Manager</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Outlook Desktop</p>
+        <h1>Microsoft account</h1>
+        <p>Connect through Microsoft's device-code flow and manage the encrypted local session.</p>
+      </header>
+
+      <section class="card">
+        <h2>Microsoft Entra app</h2>
+        <p class="hint">Use a public client app with device-code flow enabled. No client secret is needed.</p>
+        <form id="config-form">
+          <label>
+            Application (client) ID
+            <input id="client-id" autocomplete="off" placeholder="00000000-0000-0000-0000-000000000000" required />
+          </label>
+          <label>
+            Tenant ID or domain
+            <input id="tenant-id" autocomplete="off" value="organizations" required />
+          </label>
+          <div class="actions">
+            <button type="submit">Save configuration</button>
+            <button id="sign-in" type="button" class="primary">Connect account</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="device-card" class="card device-card" hidden>
+        <h2>Complete sign-in</h2>
+        <p id="device-message"></p>
+        <div class="code-row">
+          <code id="device-code"></code>
+          <button id="copy-code" type="button">Copy code</button>
+        </div>
+        <button id="open-verification" type="button" class="primary">Open Microsoft sign-in</button>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <h2>Connected accounts</h2>
+            <p class="hint">Raw access and refresh tokens are never displayed or exportable.</p>
+          </div>
+          <span id="storage-status" class="status"></span>
+        </div>
+        <div id="accounts" class="accounts"></div>
+      </section>
+
+      <p id="message" class="message" role="status"></p>
+    </main>
+    <script src="../account-renderer.js"></script>
+  </body>
+</html>
