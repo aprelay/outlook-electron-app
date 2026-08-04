@@ -29,7 +29,7 @@ npm install
 npm start
 ```
 
-The app opens the local Outlook Portal. **Browser Sessions** launches official Outlook in your normal browser, where Chrome/Edge owns and persists the Microsoft session. The menu also provides an optional Electron Outlook window backed by the persistent `persist:outlook` partition. Enter your Office email and password only on Microsoft's sign-in page.
+The app opens the local Outlook Portal. The right-side panel provides a visible **Sign in with device code** flow using your Microsoft Entra client ID and tenant. **Browser Sessions** launches official Outlook in your normal browser, where Chrome/Edge owns and persists the Microsoft session. The menu also provides an optional Electron Outlook window backed by the persistent `persist:outlook` partition. Enter your Office email and password only on Microsoft's sign-in page.
 
 ## Configure the portal server
 

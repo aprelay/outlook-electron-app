@@ -285,6 +285,27 @@ if (!hasLock) {
         portalManager?.saveConfig(config.serverUrl, config.accessKey),
     );
     ipcMain.handle('portal:connect', () => portalManager?.connect());
+    ipcMain.handle('portal:get-device-config', async () => {
+      const state = await accountManager?.getState();
+      return state?.config;
+    });
+    ipcMain.handle(
+      'portal:start-device-code',
+      async (event, config: { clientId: string; tenantId: string }) => {
+        if (!accountManager) {
+          throw new Error('Account manager is not ready.');
+        }
+        await accountManager.saveConfig(config);
+        return accountManager.signIn((response) => {
+          event.sender.send('portal:device-code', {
+            userCode: response.userCode,
+            verificationUri: response.verificationUri,
+            expiresIn: response.expiresIn,
+            message: response.message,
+          });
+        });
+      },
+    );
     ipcMain.handle('portal:open-outlook', () => openExternal(OUTLOOK_URL));
     ipcMain.handle('portal:open-token-dashboard', () => createAccountWindow());
     ipcMain.handle('portal:open-admin-center', () => openExternal(ADMIN_CENTER_URL));

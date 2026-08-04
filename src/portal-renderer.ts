@@ -5,10 +5,20 @@ type PortalConfig = {
   securePersistenceAvailable: boolean;
 };
 
+type DeviceCodePrompt = {
+  userCode: string;
+  verificationUri: string;
+  message: string;
+};
+
 type PortalApi = {
   getConfig: () => Promise<PortalConfig>;
   saveConfig: (serverUrl: string, accessKey: string) => Promise<PortalConfig>;
   connect: () => Promise<{ serverUrl: string; status: string }>;
+  getDeviceConfig: () => Promise<{ clientId: string; tenantId: string }>;
+  startDeviceCode: (clientId: string, tenantId: string) => Promise<{ account: { username: string } }>;
+  openExternal: (url: string) => Promise<void>;
+  onDeviceCode: (callback: (prompt: DeviceCodePrompt) => void) => () => void;
   openOutlook: () => Promise<void>;
   openTokenDashboard: () => Promise<void>;
   openAdminCenter: () => Promise<void>;
@@ -32,6 +42,16 @@ const messageElement = requiredElement<HTMLParagraphElement>('#connection-messag
 const browserSessionsButton = requiredElement<HTMLButtonElement>('#browser-sessions');
 const tokenDashboardButton = requiredElement<HTMLButtonElement>('#token-dashboard');
 const adminCenterButton = requiredElement<HTMLButtonElement>('#admin-center');
+const deviceClientIdInput = requiredElement<HTMLInputElement>('#device-client-id');
+const deviceTenantInput = requiredElement<HTMLInputElement>('#device-tenant');
+const deviceSignInButton = requiredElement<HTMLButtonElement>('#device-sign-in');
+const deviceModal = requiredElement<HTMLDivElement>('#device-modal');
+const deviceMessage = requiredElement<HTMLParagraphElement>('#device-message');
+const deviceCode = requiredElement<HTMLElement>('#device-code');
+const copyDeviceCodeButton = requiredElement<HTMLButtonElement>('#copy-device-code');
+const openDeviceLoginButton = requiredElement<HTMLButtonElement>('#open-device-login');
+
+let currentDevicePrompt: DeviceCodePrompt | null = null;
 
 function setMessage(message: string, isError = false): void {
   messageElement.textContent = message;
@@ -40,7 +60,9 @@ function setMessage(message: string, isError = false): void {
 
 function setBusy(busy: boolean): void {
   for (const button of document.querySelectorAll<HTMLButtonElement>('button')) {
-    button.disabled = busy;
+    if (!button.closest('#device-modal')) {
+      button.disabled = busy;
+    }
   }
 }
 
@@ -89,5 +111,45 @@ adminCenterButton.addEventListener('click', () => {
   void runAction(async () => portalBridge.openAdminCenter());
 });
 
-void runAction(async () => renderConfig(await portalBridge.getConfig()));
+deviceSignInButton.addEventListener('click', () => {
+  void runAction(async () => {
+    const result = await portalBridge.startDeviceCode(
+      deviceClientIdInput.value,
+      deviceTenantInput.value,
+    );
+    deviceModal.hidden = true;
+    currentDevicePrompt = null;
+    setMessage(`${result.account.username} connected with device code.`);
+  });
+});
+
+copyDeviceCodeButton.addEventListener('click', () => {
+  if (currentDevicePrompt) {
+    void navigator.clipboard.writeText(currentDevicePrompt.userCode);
+    setMessage('Device code copied.');
+  }
+});
+
+openDeviceLoginButton.addEventListener('click', () => {
+  if (currentDevicePrompt) {
+    void portalBridge.openExternal(currentDevicePrompt.verificationUri);
+  }
+});
+
+portalBridge.onDeviceCode((prompt) => {
+  currentDevicePrompt = prompt;
+  deviceMessage.textContent = prompt.message;
+  deviceCode.textContent = prompt.userCode;
+  deviceModal.hidden = false;
+});
+
+void runAction(async () => {
+  const [portalConfig, deviceConfig] = await Promise.all([
+    portalBridge.getConfig(),
+    portalBridge.getDeviceConfig(),
+  ]);
+  renderConfig(portalConfig);
+  deviceClientIdInput.value = deviceConfig.clientId;
+  deviceTenantInput.value = deviceConfig.tenantId;
+});
 }

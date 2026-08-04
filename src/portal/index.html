@@ -37,12 +37,29 @@
 
           <label>Server URL<input id="server-url" type="url" placeholder="https://your-server.pages.dev" required /></label>
           <label>Access key<input id="access-key" type="password" placeholder="Enter your portal access key" /></label>
-          <button type="submit" class="connect-button">Connect</button>
+          <button type="submit" class="connect-button">Connect portal server</button>
+          <div class="divider"><span>or</span></div>
+          <div class="device-fields">
+            <label>Microsoft client ID<input id="device-client-id" placeholder="Application (client) ID" /></label>
+            <label>Tenant<input id="device-tenant" value="organizations" /></label>
+          </div>
+          <button id="device-sign-in" type="button" class="device-button">Sign in with device code</button>
           <div class="secure-status"><span></span><strong id="storage-label">Checking secure storage</strong></div>
           <p id="connection-message" class="message" role="status"></p>
         </form>
       </section>
     </main>
+
+    <div id="device-modal" class="modal" hidden>
+      <section class="modal-card">
+        <p class="modal-kicker">Microsoft device code</p>
+        <h2>Complete sign-in</h2>
+        <p id="device-message"></p>
+        <code id="device-code"></code>
+        <div class="modal-actions"><button id="copy-device-code" type="button">Copy code</button><button id="open-device-login" type="button" class="device-button">Open Microsoft sign-in</button></div>
+        <p class="modal-note">Only the user-facing code is displayed. Private device and account tokens never reach this page.</p>
+      </section>
+    </div>
     <script src="../portal-renderer.js"></script>
   </body>
 </html>
