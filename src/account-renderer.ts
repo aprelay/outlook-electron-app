@@ -47,7 +47,7 @@ type AccountManagerApi = {
   onDeviceCode: (callback: (prompt: DeviceCodePrompt) => void) => () => void;
 };
 
-const accountManager = (window as unknown as { accountManager: AccountManagerApi }).accountManager;
+const dashboardApi = (window as unknown as { accountManager: AccountManagerApi }).accountManager;
 
 function requiredElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -218,15 +218,15 @@ function renderSessions(accounts: AccountSummary[]): void {
     actions.className = 'actions';
     actions.append(
       actionButton('Force refresh', '', async () => {
-        const result = await accountManager.refresh(account.homeAccountId);
+        const result = await dashboardApi.refresh(account.homeAccountId);
         await refreshState();
         setMessage(`Session refreshed. Access expires ${formatDate(result.expiresOn)}.`);
       }),
       actionButton('Review Microsoft permissions', '', async () => {
-        await accountManager.openExternal('https://myaccount.microsoft.com/');
+        await dashboardApi.openExternal('https://myaccount.microsoft.com/');
       }),
       actionButton('Remove local session', 'danger', async () => {
-        currentState = await accountManager.remove(account.homeAccountId);
+        currentState = await dashboardApi.remove(account.homeAccountId);
         renderState(currentState);
         setMessage('The encrypted local session was removed.');
       }),
@@ -292,7 +292,8 @@ function renderState(state: AccountState): void {
 }
 
 async function refreshState(): Promise<void> {
-  renderState(await accountManager.getState());
+  const state = await dashboardApi.getState();
+  renderState(state);
 }
 
 async function runAction(action: () => Promise<void>): Promise<void> {
@@ -330,7 +331,7 @@ async function connectAccount(): Promise<void> {
     return;
   }
 
-  const result = await accountManager.signIn();
+  const result = await dashboardApi.signIn();
   deviceModal.hidden = true;
   currentPrompt = null;
   await refreshState();
@@ -348,7 +349,8 @@ settingsConnectButton.addEventListener('click', () => void runAction(connectAcco
 configForm.addEventListener('submit', (event) => {
   event.preventDefault();
   void runAction(async () => {
-    renderState(await accountManager.saveConfig(clientIdInput.value, tenantIdInput.value));
+    const state = await dashboardApi.saveConfig(clientIdInput.value, tenantIdInput.value);
+    renderState(state);
     setMessage('Microsoft Entra configuration saved.');
   });
 });
@@ -362,12 +364,12 @@ copyCodeButton.addEventListener('click', () => {
 
 verificationButton.addEventListener('click', () => {
   if (currentPrompt) {
-    void accountManager.openExternal(currentPrompt.verificationUri);
+    void dashboardApi.openExternal(currentPrompt.verificationUri);
   }
 });
 
 permissionsButton.addEventListener('click', () => {
-  void accountManager.openExternal('https://myaccount.microsoft.com/');
+  void dashboardApi.openExternal('https://myaccount.microsoft.com/');
 });
 
 removeAllButton.addEventListener('click', () => {
@@ -375,12 +377,13 @@ removeAllButton.addEventListener('click', () => {
     return;
   }
   void runAction(async () => {
-    renderState(await accountManager.removeAll());
+    const state = await dashboardApi.removeAll();
+    renderState(state);
     setMessage('All encrypted local sessions were removed.');
   });
 });
 
-accountManager.onDeviceCode((prompt) => {
+dashboardApi.onDeviceCode((prompt) => {
   currentPrompt = prompt;
   deviceMessage.textContent = prompt.message;
   deviceCode.textContent = prompt.userCode;
