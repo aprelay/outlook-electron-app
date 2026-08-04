@@ -1,1 +1,51 @@
-# outlook-electron-app
+# Outlook Desktop
+
+A focused Electron desktop app for Microsoft Outlook on the web. Sign-in happens directly on Microsoft's website; the app does not collect or store your password.
+
+## Features
+
+- Persistent Microsoft 365 session
+- Native desktop notifications and unread badge
+- Secure isolated web content (`sandbox`, context isolation, no Node.js access)
+- Microsoft links open in-app; other links open in the default browser
+- Single-instance behavior, spellcheck, zoom, reload, and fullscreen controls
+- Windows, macOS, and Linux packaging
+
+## Requirements
+
+- Node.js 20 or newer
+- npm 10 or newer
+- A Microsoft 365 or Outlook account
+
+## Run locally
+
+```bash
+npm install
+npm start
+```
+
+The app opens `https://outlook.office.com/mail/`. Enter your Office email and password only on Microsoft's sign-in page.
+
+## Quality checks
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
+
+## Build an installer
+
+Build for the current operating system:
+
+```bash
+npm run package
+```
+
+Installers are written to `release/`. Windows installers should normally be built on Windows, macOS images on macOS, and Linux packages on Linux.
+
+To create an unpacked application for development:
+
+```bash
+npm run package:dir
+```

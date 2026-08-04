@@ -1,0 +1,55 @@
+{
+  "name": "outlook-desktop",
+  "version": "1.0.0",
+  "description": "A secure desktop app for Outlook on the web",
+  "main": "dist/main.js",
+  "author": "aprelay",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && electron-builder",
+    "package:dir": "npm run build && electron-builder --dir"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.31.0",
+    "electron": "37.2.6",
+    "electron-builder": "26.0.12",
+    "eslint": "9.31.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.38.0"
+  },
+  "build": {
+    "appId": "com.aprelay.outlookdesktop",
+    "productName": "Outlook Desktop",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "category": "Office",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
