@@ -7,59 +7,104 @@
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Microsoft Account Manager</title>
+    <title>Token Manager</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <header>
-        <p class="eyebrow">Outlook Desktop</p>
-        <h1>Microsoft account</h1>
-        <p>Connect through Microsoft's device-code flow and manage the encrypted local session.</p>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">T</div>
+        <div><strong>Token Manager</strong><span>Microsoft OAuth Dashboard</span></div>
+      </div>
+      <nav aria-label="Token manager navigation">
+        <button class="nav-item active" data-view="overview"><span>OV</span>Overview</button>
+        <button class="nav-item" data-view="sessions"><span>SS</span>Sessions</button>
+        <button class="nav-item" data-view="audit"><span>AL</span>Audit Log</button>
+        <button class="nav-item" data-view="settings"><span>ST</span>Settings</button>
+      </nav>
+      <div class="security-card">
+        <div class="shield">S</div>
+        <div><strong>Local Security</strong><span id="sidebar-storage">Checking storage</span></div>
+      </div>
+      <div class="role">Scope: <strong>YOUR ACCOUNTS ONLY</strong></div>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <div><p class="eyebrow">Outlook Desktop</p><h1 id="view-title">Token Overview</h1></div>
+        <button id="connect-account" class="primary">Connect Microsoft account</button>
       </header>
 
-      <section class="card">
-        <h2>Microsoft Entra app</h2>
-        <p class="hint">Use a public client app with device-code flow enabled. No client secret is needed.</p>
-        <form id="config-form">
-          <label>
-            Application (client) ID
-            <input id="client-id" autocomplete="off" placeholder="00000000-0000-0000-0000-000000000000" required />
-          </label>
-          <label>
-            Tenant ID or domain
-            <input id="tenant-id" autocomplete="off" value="organizations" required />
-          </label>
-          <div class="actions">
-            <button type="submit">Save configuration</button>
-            <button id="sign-in" type="button" class="primary">Connect account</button>
+      <div class="workspace">
+        <section id="view-overview" class="view active">
+          <div class="metrics">
+            <article class="metric"><strong id="metric-total">0</strong><span>Total sessions</span></article>
+            <article class="metric success"><strong id="metric-active">0</strong><span>Active</span></article>
+            <article class="metric"><strong id="metric-refreshes">0</strong><span>Token refreshes (24h)</span></article>
+            <article class="metric success"><strong id="metric-failures">0</strong><span>Failed refreshes (24h)</span></article>
           </div>
-        </form>
-      </section>
 
-      <section id="device-card" class="card device-card" hidden>
-        <h2>Complete sign-in</h2>
-        <p id="device-message"></p>
-        <div class="code-row">
-          <code id="device-code"></code>
-          <button id="copy-code" type="button">Copy code</button>
-        </div>
-        <button id="open-verification" type="button" class="primary">Open Microsoft sign-in</button>
-      </section>
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Active Sessions</h2><p>Your connected Microsoft accounts.</p></div><span id="storage-status" class="pill"></span></div>
+            <div id="overview-sessions" class="session-list"></div>
+          </article>
 
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <h2>Connected accounts</h2>
-            <p class="hint">Raw access and refresh tokens are never displayed or exportable.</p>
-          </div>
-          <span id="storage-status" class="status"></span>
-        </div>
-        <div id="accounts" class="accounts"></div>
-      </section>
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Token Lifecycle</h2><p>Safe controls without exposing bearer or refresh token values.</p></div></div>
+            <div class="lifecycle-grid">
+              <div><strong>Connect</strong><span>Authorize with Microsoft's device-code page.</span></div>
+              <div><strong>Refresh</strong><span>Force a new access token through MSAL.</span></div>
+              <div><strong>Remove</strong><span>Delete the encrypted local account cache.</span></div>
+              <div><strong>Permissions</strong><span>Review or revoke consent at Microsoft.</span></div>
+            </div>
+          </article>
+        </section>
+
+        <section id="view-sessions" class="view">
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Session Management</h2><p>Expiry, scopes, refresh, and removal for each connected account.</p></div></div>
+            <div id="session-cards" class="session-cards"></div>
+          </article>
+        </section>
+
+        <section id="view-audit" class="view">
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Audit Log</h2><p>Local token lifecycle activity. No token values are recorded.</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Action</th><th>Account</th><th>Status</th><th>Time</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+          </article>
+        </section>
+
+        <section id="view-settings" class="view">
+          <article class="panel settings-panel">
+            <h2>Microsoft Entra Configuration</h2>
+            <p>Create a public client app, enable device-code flow, and grant delegated `User.Read`, `Mail.ReadWrite`, and `Mail.Send` permissions.</p>
+            <form id="config-form">
+              <label>Application (client) ID<input id="client-id" autocomplete="off" placeholder="00000000-0000-0000-0000-000000000000" required /></label>
+              <label>Tenant ID or domain<input id="tenant-id" autocomplete="off" value="organizations" required /></label>
+              <div class="actions"><button type="submit">Save configuration</button><button id="settings-connect" type="button" class="primary">Connect account</button></div>
+            </form>
+            <hr />
+            <h2>Microsoft Permissions</h2>
+            <p>Use Microsoft's account portal to review or revoke application consent.</p>
+            <div class="actions"><button id="open-permissions" type="button">Open Microsoft permissions</button><button id="remove-all" type="button" class="danger">Remove all local sessions</button></div>
+          </article>
+        </section>
+      </div>
 
       <p id="message" class="message" role="status"></p>
     </main>
+
+    <div id="device-modal" class="modal" hidden>
+      <div class="modal-card">
+        <p class="eyebrow">Microsoft device code</p>
+        <h2>Complete sign-in</h2>
+        <p id="device-message"></p>
+        <code id="device-code"></code>
+        <div class="actions"><button id="copy-code" type="button">Copy code</button><button id="open-verification" type="button" class="primary">Open Microsoft sign-in</button></div>
+        <p class="safe-note">Only the user code is shown. The private device code and account tokens remain inside MSAL.</p>
+      </div>
+    </div>
+
     <script src="../account-renderer.js"></script>
   </body>
 </html>

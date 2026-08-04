@@ -7,7 +7,8 @@ A focused Electron desktop app for Microsoft Outlook on the web. Sign-in happens
 - Persistent Microsoft 365 session
 - Native desktop notifications and unread badge
 - Microsoft device-code sign-in for Graph mail permissions
-- Encrypted local token cache with status, refresh, and removal controls
+- Dashboard for session counts, scopes, expiry, refreshes, failures, and local audit history
+- Encrypted local token cache with force-refresh, per-account removal, and remove-all controls
 - Secure isolated web content (`sandbox`, context isolation, no Node.js access)
 - Microsoft links open in-app; other links open in the default browser
 - Single-instance behavior, spellcheck, zoom, reload, and fullscreen controls
@@ -36,7 +37,7 @@ The app opens `https://outlook.office.com/mail/`. Enter your Office email and pa
 4. Copy the **Application (client) ID**. No client secret is required.
 5. In Outlook Desktop, open **Mail → Microsoft Account**, enter the client ID and tenant ID or domain, then select **Connect account**.
 
-The account manager shows account and expiry metadata only. It never displays or exports raw access or refresh tokens. The MSAL cache is persisted only when Electron can use operating-system encryption; otherwise it remains session-only.
+The token dashboard gives you lifecycle control over your own Microsoft sessions: status, expiry, granted scopes, forced refresh, local removal, remove-all, audit history, and a link to Microsoft's consent controls. It never displays, imports, or exports raw access or refresh tokens. The MSAL cache is persisted only when Electron can use operating-system encryption; otherwise it remains session-only.
 
 ## Quality checks
 

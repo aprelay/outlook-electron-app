@@ -11,6 +11,7 @@ import path from 'node:path';
 
 const DEFAULT_TENANT = 'organizations';
 const MAIL_SCOPES = ['User.Read', 'Mail.ReadWrite', 'Mail.Send', 'offline_access'];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 type DeviceCodeResponse = {
   userCode: string;
@@ -31,11 +32,42 @@ type AccountSummary = {
   name: string;
   username: string;
   tenantId: string;
+  expiresOn: string | null;
+  lastRefreshedAt: string | null;
+  scopes: string[];
+  status: 'active' | 'expired' | 'unknown';
+};
+
+export type AuditEvent = {
+  id: string;
+  action: 'connected' | 'refreshed' | 'refresh_failed' | 'removed' | 'configuration_updated';
+  account: string | null;
+  timestamp: string;
+  success: boolean;
+};
+
+type SessionMetadata = {
+  homeAccountId: string;
+  expiresOn: string | null;
+  lastRefreshedAt: string;
+  scopes: string[];
+};
+
+type LifecycleData = {
+  sessions: SessionMetadata[];
+  audit: AuditEvent[];
 };
 
 export type AccountState = {
   config: AccountConfig;
   accounts: AccountSummary[];
+  audit: AuditEvent[];
+  metrics: {
+    totalSessions: number;
+    activeSessions: number;
+    refreshes24h: number;
+    failedRefreshes24h: number;
+  };
   securePersistenceAvailable: boolean;
 };
 
@@ -83,15 +115,6 @@ class SecureTokenCache implements ICachePlugin {
   }
 }
 
-function summarizeAccount(account: AccountInfo): AccountSummary {
-  return {
-    homeAccountId: account.homeAccountId,
-    name: account.name ?? 'Microsoft 365 account',
-    username: account.username,
-    tenantId: account.tenantId,
-  };
-}
-
 function validateConfig(config: AccountConfig): AccountConfig {
   const clientId = config.clientId.trim();
   const tenantId = config.tenantId.trim() || DEFAULT_TENANT;
@@ -106,11 +129,20 @@ function validateConfig(config: AccountConfig): AccountConfig {
   return { clientId, tenantId };
 }
 
+function statusFor(expiresOn: string | null): AccountSummary['status'] {
+  if (!expiresOn) {
+    return 'unknown';
+  }
+  return Date.parse(expiresOn) > Date.now() ? 'active' : 'expired';
+}
+
 export class MicrosoftAccountManager {
   private application: PublicClientApplication | null = null;
   private config: AccountConfig = { clientId: '', tenantId: DEFAULT_TENANT };
+  private lifecycle: LifecycleData = { sessions: [], audit: [] };
   private readonly configPath = path.join(app.getPath('userData'), 'account-config.json');
   private readonly cachePath = path.join(app.getPath('userData'), 'msal-cache.bin');
+  private readonly lifecyclePath = path.join(app.getPath('userData'), 'token-lifecycle.json');
 
   async initialize(): Promise<void> {
     try {
@@ -120,16 +152,32 @@ export class MicrosoftAccountManager {
     } catch {
       this.config = { clientId: '', tenantId: DEFAULT_TENANT };
     }
+
+    try {
+      this.lifecycle = JSON.parse(await fs.readFile(this.lifecyclePath, 'utf8')) as LifecycleData;
+    } catch {
+      this.lifecycle = { sessions: [], audit: [] };
+    }
   }
 
   async getState(): Promise<AccountState> {
     const accounts = this.application
       ? await this.application.getTokenCache().getAllAccounts()
       : [];
+    const summaries = accounts.map((account) => this.summarizeAccount(account));
+    const cutoff = Date.now() - DAY_MS;
+    const recentAudit = this.lifecycle.audit.filter((event) => Date.parse(event.timestamp) >= cutoff);
 
     return {
       config: this.config,
-      accounts: accounts.map(summarizeAccount),
+      accounts: summaries,
+      audit: this.lifecycle.audit.slice(0, 100),
+      metrics: {
+        totalSessions: summaries.length,
+        activeSessions: summaries.filter((account) => account.status === 'active').length,
+        refreshes24h: recentAudit.filter((event) => event.action === 'refreshed').length,
+        failedRefreshes24h: recentAudit.filter((event) => event.action === 'refresh_failed').length,
+      },
       securePersistenceAvailable: canPersistSecurely(),
     };
   }
@@ -141,6 +189,9 @@ export class MicrosoftAccountManager {
     this.config = nextConfig;
     if (changed) {
       await fs.rm(this.cachePath, { force: true });
+      this.lifecycle.sessions = [];
+      this.addAudit('configuration_updated', null, true);
+      await this.persistLifecycle();
     }
     await fs.mkdir(path.dirname(this.configPath), { recursive: true });
     await fs.writeFile(this.configPath, JSON.stringify(this.config), { mode: 0o600 });
@@ -159,7 +210,7 @@ export class MicrosoftAccountManager {
       throw new Error('Microsoft did not return an account token.');
     }
 
-    return this.summarizeResult(result);
+    return this.recordResult(result, 'connected');
   }
 
   async refresh(homeAccountId: string): Promise<RefreshResult> {
@@ -169,11 +220,18 @@ export class MicrosoftAccountManager {
       throw new Error('That account is no longer available.');
     }
 
-    const result = await application.acquireTokenSilent({
-      account,
-      scopes: MAIL_SCOPES,
-    });
-    return this.summarizeResult(result);
+    try {
+      const result = await application.acquireTokenSilent({
+        account,
+        scopes: MAIL_SCOPES,
+        forceRefresh: true,
+      });
+      return await this.recordResult(result, 'refreshed');
+    } catch (error) {
+      this.addAudit('refresh_failed', account.username, false);
+      await this.persistLifecycle();
+      throw error;
+    }
   }
 
   async remove(homeAccountId: string): Promise<AccountState> {
@@ -181,7 +239,24 @@ export class MicrosoftAccountManager {
     const account = await application.getTokenCache().getAccountByHomeId(homeAccountId);
     if (account) {
       await application.getTokenCache().removeAccount(account);
+      this.lifecycle.sessions = this.lifecycle.sessions.filter(
+        (session) => session.homeAccountId !== homeAccountId,
+      );
+      this.addAudit('removed', account.username, true);
+      await this.persistLifecycle();
     }
+    return this.getState();
+  }
+
+  async removeAll(): Promise<AccountState> {
+    const application = this.requireApplication();
+    const accounts = await application.getTokenCache().getAllAccounts();
+    for (const account of accounts) {
+      await application.getTokenCache().removeAccount(account);
+      this.addAudit('removed', account.username, true);
+    }
+    this.lifecycle.sessions = [];
+    await this.persistLifecycle();
     return this.getState();
   }
 
@@ -204,15 +279,66 @@ export class MicrosoftAccountManager {
     return this.application;
   }
 
-  private summarizeResult(result: AuthenticationResult): RefreshResult {
+  private summarizeAccount(account: AccountInfo): AccountSummary {
+    const metadata = this.lifecycle.sessions.find(
+      (session) => session.homeAccountId === account.homeAccountId,
+    );
+    const expiresOn = metadata?.expiresOn ?? null;
+    return {
+      homeAccountId: account.homeAccountId,
+      name: account.name ?? 'Microsoft 365 account',
+      username: account.username,
+      tenantId: account.tenantId,
+      expiresOn,
+      lastRefreshedAt: metadata?.lastRefreshedAt ?? null,
+      scopes: metadata?.scopes ?? [],
+      status: statusFor(expiresOn),
+    };
+  }
+
+  private async recordResult(
+    result: AuthenticationResult,
+    action: 'connected' | 'refreshed',
+  ): Promise<RefreshResult> {
     if (!result.account) {
       throw new Error('Microsoft did not return account details.');
     }
 
-    return {
-      account: summarizeAccount(result.account),
+    const timestamp = new Date().toISOString();
+    const metadata: SessionMetadata = {
+      homeAccountId: result.account.homeAccountId,
       expiresOn: result.expiresOn?.toISOString() ?? null,
-      scopes: result.scopes,
+      lastRefreshedAt: timestamp,
+      scopes: [...result.scopes].sort(),
     };
+    this.lifecycle.sessions = [
+      metadata,
+      ...this.lifecycle.sessions.filter(
+        (session) => session.homeAccountId !== result.account?.homeAccountId,
+      ),
+    ];
+    this.addAudit(action, result.account.username, true);
+    await this.persistLifecycle();
+
+    const account = this.summarizeAccount(result.account);
+    return { account, expiresOn: account.expiresOn, scopes: account.scopes };
+  }
+
+  private addAudit(action: AuditEvent['action'], account: string | null, success: boolean): void {
+    this.lifecycle.audit = [
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        action,
+        account,
+        timestamp: new Date().toISOString(),
+        success,
+      },
+      ...this.lifecycle.audit,
+    ].slice(0, 200);
+  }
+
+  private async persistLifecycle(): Promise<void> {
+    await fs.mkdir(path.dirname(this.lifecyclePath), { recursive: true });
+    await fs.writeFile(this.lifecyclePath, JSON.stringify(this.lifecycle), { mode: 0o600 });
   }
 }

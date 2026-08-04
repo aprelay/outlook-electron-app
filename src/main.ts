@@ -172,10 +172,10 @@ function createAccountWindow(): void {
   }
 
   accountWindow = new BrowserWindow({
-    width: 820,
-    height: 840,
-    minWidth: 680,
-    minHeight: 620,
+    width: 1180,
+    height: 860,
+    minWidth: 940,
+    minHeight: 680,
     parent: mainWindow ?? undefined,
     title: 'Microsoft Account Manager',
     backgroundColor: '#f4f7fb',
@@ -261,6 +261,7 @@ if (!hasLock) {
     ipcMain.handle('account:remove', (_event, homeAccountId: string) =>
       accountManager?.remove(homeAccountId),
     );
+    ipcMain.handle('account:remove-all', () => accountManager?.removeAll());
 
     createMenu();
     createWindow();
