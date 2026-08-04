@@ -2,8 +2,10 @@ import { app, BrowserWindow, ipcMain, Menu, shell, session } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MicrosoftAccountManager } from './auth';
+import { PortalConnectionManager } from './portal';
 
 const OUTLOOK_URL = 'https://outlook.office.com/mail/';
+const ADMIN_CENTER_URL = 'https://admin.microsoft.com/';
 const TRUSTED_HOSTS = [
   'microsoft.com',
   'microsoftonline.com',
@@ -13,9 +15,11 @@ const TRUSTED_HOSTS = [
   'live.com',
 ];
 
-let mainWindow: BrowserWindow | null = null;
+let portalWindow: BrowserWindow | null = null;
+let outlookWindow: BrowserWindow | null = null;
 let accountWindow: BrowserWindow | null = null;
 let accountManager: MicrosoftAccountManager | null = null;
+let portalManager: PortalConnectionManager | null = null;
 
 function isTrustedUrl(rawUrl: string): boolean {
   try {
@@ -23,7 +27,6 @@ function isTrustedUrl(rawUrl: string): boolean {
     if (url.protocol !== 'https:') {
       return false;
     }
-
     return TRUSTED_HOSTS.some(
       (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
     );
@@ -45,19 +48,26 @@ async function openExternal(rawUrl: string): Promise<void> {
 
 function createMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin'
-      ? [{ role: 'appMenu' as const }]
-      : []),
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     {
-      label: 'Mail',
+      label: 'Portal',
       submenu: [
         {
-          label: 'Open Outlook',
-          accelerator: 'CmdOrCtrl+Shift+O',
-          click: () => void mainWindow?.loadURL(OUTLOOK_URL),
+          label: 'Show Portal',
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: () => createPortalWindow(),
         },
         {
-          label: 'Microsoft Account',
+          label: 'Open Outlook in Browser',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => void openExternal(OUTLOOK_URL),
+        },
+        {
+          label: 'Open Outlook Desktop Window',
+          click: () => createOutlookWindow(),
+        },
+        {
+          label: 'Token Dashboard',
           accelerator: 'CmdOrCtrl+,',
           click: () => createAccountWindow(),
         },
@@ -97,12 +107,58 @@ function createMenu(): void {
       submenu: [{ role: 'minimize' }, { role: 'zoom' }],
     },
   ];
-
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
+function createPortalWindow(): void {
+  if (portalWindow) {
+    portalWindow.show();
+    portalWindow.focus();
+    return;
+  }
+
+  portalWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 980,
+    minHeight: 680,
+    show: false,
+    title: 'Outlook Portal',
+    backgroundColor: '#10101f',
+    webPreferences: {
+      preload: path.join(__dirname, 'portal-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+
+  const portalPageUrl = pathToFileURL(path.join(__dirname, 'portal', 'index.html')).toString();
+  portalWindow.once('ready-to-show', () => portalWindow?.show());
+  portalWindow.on('closed', () => {
+    portalWindow = null;
+  });
+  portalWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternal(url);
+    return { action: 'deny' };
+  });
+  portalWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== portalPageUrl) {
+      event.preventDefault();
+    }
+  });
+  void portalWindow.loadURL(portalPageUrl);
+}
+
+function createOutlookWindow(): void {
+  if (outlookWindow) {
+    outlookWindow.show();
+    outlookWindow.focus();
+    return;
+  }
+
+  outlookWindow = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 900,
@@ -121,21 +177,19 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  outlookWindow.once('ready-to-show', () => outlookWindow?.show());
+  outlookWindow.on('closed', () => {
+    outlookWindow = null;
   });
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  outlookWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!isTrustedUrl(url)) {
       void openExternal(url);
       return { action: 'deny' };
     }
-
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
-        parent: mainWindow ?? undefined,
+        parent: outlookWindow ?? undefined,
         webPreferences: {
           partition: 'persist:outlook',
           contextIsolation: true,
@@ -146,22 +200,17 @@ function createWindow(): void {
       },
     };
   });
-
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  outlookWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUrl(url)) {
       event.preventDefault();
       void openExternal(url);
     }
   });
-
-  mainWindow.webContents.on('page-title-updated', (_event, title) => {
+  outlookWindow.webContents.on('page-title-updated', (_event, title) => {
     const unreadCount = Number(title.match(/^\((\d+)\)/)?.[1] ?? 0);
-    if (app.isReady()) {
-      app.setBadgeCount(unreadCount);
-    }
+    app.setBadgeCount(unreadCount);
   });
-
-  void mainWindow.loadURL(OUTLOOK_URL);
+  void outlookWindow.loadURL(OUTLOOK_URL);
 }
 
 function createAccountWindow(): void {
@@ -176,8 +225,7 @@ function createAccountWindow(): void {
     height: 860,
     minWidth: 940,
     minHeight: 680,
-    parent: mainWindow ?? undefined,
-    title: 'Microsoft Account Manager',
+    title: 'Microsoft Token Dashboard',
     backgroundColor: '#f4f7fb',
     webPreferences: {
       preload: path.join(__dirname, 'account-preload.js'),
@@ -188,10 +236,10 @@ function createAccountWindow(): void {
     },
   });
 
+  const accountPageUrl = pathToFileURL(path.join(__dirname, 'account', 'index.html')).toString();
   accountWindow.on('closed', () => {
     accountWindow = null;
   });
-  const accountPageUrl = pathToFileURL(path.join(__dirname, 'account', 'index.html')).toString();
   accountWindow.webContents.setWindowOpenHandler(({ url }) => {
     void openExternal(url);
     return { action: 'deny' };
@@ -208,25 +256,17 @@ const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) {
-      createWindow();
-      return;
-    }
-
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.show();
-    mainWindow.focus();
-  });
+  app.on('second-instance', () => createPortalWindow());
 
   app.whenReady().then(async () => {
     app.setAppUserModelId('com.aprelay.outlookdesktop');
     accountManager = new MicrosoftAccountManager();
-    await accountManager.initialize();
+    portalManager = new PortalConnectionManager();
+    await Promise.all([accountManager.initialize(), portalManager.initialize()]);
 
     const outlookSession = session.fromPartition('persist:outlook');
+    const browserUserAgent = outlookSession.getUserAgent().replace(/\sElectron\/\S+/, '');
+    outlookSession.setUserAgent(browserUserAgent);
     outlookSession.setPermissionRequestHandler((webContents, permission, callback) => {
       const trusted = isTrustedUrl(webContents.getURL());
       callback(trusted && permission === 'notifications');
@@ -238,6 +278,17 @@ if (!hasLock) {
       }
       return undefined;
     });
+    ipcMain.handle('portal:get-config', () => portalManager?.getConfig());
+    ipcMain.handle(
+      'portal:save-config',
+      (_event, config: { serverUrl: string; accessKey: string }) =>
+        portalManager?.saveConfig(config.serverUrl, config.accessKey),
+    );
+    ipcMain.handle('portal:connect', () => portalManager?.connect());
+    ipcMain.handle('portal:open-outlook', () => openExternal(OUTLOOK_URL));
+    ipcMain.handle('portal:open-token-dashboard', () => createAccountWindow());
+    ipcMain.handle('portal:open-admin-center', () => openExternal(ADMIN_CENTER_URL));
+
     ipcMain.handle('account:get-state', () => accountManager?.getState());
     ipcMain.handle('account:save-config', (_event, config: { clientId: string; tenantId: string }) =>
       accountManager?.saveConfig(config),
@@ -264,11 +315,11 @@ if (!hasLock) {
     ipcMain.handle('account:remove-all', () => accountManager?.removeAll());
 
     createMenu();
-    createWindow();
+    createPortalWindow();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
+        createPortalWindow();
       }
     });
   });

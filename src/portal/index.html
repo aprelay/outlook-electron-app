@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Outlook Portal</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="portal-layout">
+      <section class="feature-side">
+        <div class="features">
+          <button class="feature-card" id="browser-sessions">
+            <span class="feature-icon">O</span>
+            <strong>Browser Sessions</strong>
+            <span>Launch your authenticated Outlook Web session in its own secure window.</span>
+          </button>
+          <button class="feature-card" id="token-dashboard">
+            <span class="feature-icon">T</span>
+            <strong>Token Dashboard</strong>
+            <span>Open the separate device-code and Microsoft session manager.</span>
+          </button>
+          <button class="feature-card" id="admin-center">
+            <span class="feature-icon">A</span>
+            <strong>Admin Panel</strong>
+            <span>Open the official Microsoft 365 admin center in your browser.</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="connect-side">
+        <form id="connection-form" class="connect-panel">
+          <div class="portal-icon">P</div>
+          <h1>Portal</h1>
+          <p>Welcome back</p>
+
+          <label>Server URL<input id="server-url" type="url" placeholder="https://your-server.pages.dev" required /></label>
+          <label>Access key<input id="access-key" type="password" placeholder="Enter your portal access key" /></label>
+          <button type="submit" class="connect-button">Connect</button>
+          <div class="secure-status"><span></span><strong id="storage-label">Checking secure storage</strong></div>
+          <p id="connection-message" class="message" role="status"></p>
+        </form>
+      </section>
+    </main>
+    <script src="../portal-renderer.js"></script>
+  </body>
+</html>

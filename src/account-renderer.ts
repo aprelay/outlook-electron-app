@@ -1,3 +1,4 @@
+{
 type AccountSummary = {
   homeAccountId: string;
   name: string;
@@ -302,7 +303,10 @@ async function runAction(action: () => Promise<void>): Promise<void> {
   try {
     await action();
   } catch (error) {
-    setMessage(error instanceof Error ? error.message : 'The operation failed.', true);
+    const message = error instanceof Error
+      ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+      : 'The operation failed.';
+    setMessage(message, true);
   } finally {
     setBusy(false);
   }
@@ -391,3 +395,4 @@ dashboardApi.onDeviceCode((prompt) => {
 });
 
 void runAction(refreshState);
+}
