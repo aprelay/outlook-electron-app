@@ -38,17 +38,49 @@
           <label>Server URL<input id="server-url" type="url" placeholder="https://your-server.pages.dev" required /></label>
           <label>Access key<input id="access-key" type="password" placeholder="Enter your portal access key" /></label>
           <button type="submit" class="connect-button">Connect portal server</button>
-          <div class="divider"><span>or</span></div>
-          <div class="device-fields">
-            <label>Microsoft client ID<input id="device-client-id" placeholder="Application (client) ID" value="04b07795-8ddb-461a-bbb0-02f9e1bf7b5c" /></label>
-            <label>Tenant<input id="device-tenant" value="organizations" /></label>
+          <div class="divider"><span>choose a sign-in method</span></div>
+          <div class="method-toggle" role="tablist">
+            <button id="method-device" type="button" class="method-tab is-active" aria-selected="true">Device code</button>
+            <button id="method-office" type="button" class="method-tab" aria-selected="false">MS Office login</button>
           </div>
-          <button id="device-sign-in" type="button" class="device-button">Sign in with device code</button>
+
+          <div id="device-panel" class="method-panel">
+            <div class="device-fields">
+              <label>Microsoft client ID<input id="device-client-id" placeholder="Application (client) ID" value="04b07795-8ddb-461a-bbb0-02f9e1bf7b5c" /></label>
+              <label>Tenant<input id="device-tenant" value="organizations" /></label>
+            </div>
+            <button id="device-sign-in" type="button" class="device-button">Sign in with device code</button>
+          </div>
+
+          <div id="office-panel" class="method-panel" hidden>
+            <p class="method-hint">Sign in through the official Microsoft page in a persistent Outlook window. Cookies stay in an encrypted session so you remain logged in.</p>
+            <button id="office-sign-in" type="button" class="device-button">Sign in with MS Office</button>
+          </div>
+
           <div class="secure-status"><span></span><strong id="storage-label">Checking secure storage</strong></div>
           <p id="connection-message" class="message" role="status"></p>
         </form>
       </section>
     </main>
+
+    <section class="manage-bar">
+      <div class="manage-card">
+        <div class="manage-head"><strong>Browser session (cookies)</strong><span id="session-badge" class="badge">Checking…</span></div>
+        <p id="session-detail" class="manage-detail">Reading Outlook session…</p>
+        <div class="manage-actions">
+          <button id="session-refresh" type="button">Refresh status</button>
+          <button id="session-clear" type="button" class="danger">Clear session &amp; sign out</button>
+        </div>
+      </div>
+      <div class="manage-card">
+        <div class="manage-head"><strong>Device-code token</strong><span id="token-badge" class="badge">No account</span></div>
+        <p id="token-detail" class="manage-detail">No device-code account connected yet.</p>
+        <div class="manage-actions">
+          <button id="token-refresh" type="button">Force refresh</button>
+          <button id="token-remove" type="button" class="danger">Remove token</button>
+        </div>
+      </div>
+    </section>
 
     <div id="device-modal" class="modal" hidden>
       <section class="modal-card">

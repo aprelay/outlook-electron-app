@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Outlook Desktop — Download</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 40px 20px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #f6f4ff;
+        background: radial-gradient(1200px 600px at 20% 0%, #1c1f45 0%, #10101f 55%, #0b0b16 100%);
+      }
+      .card {
+        width: min(560px, 100%);
+        padding: 44px 40px;
+        border: 1px solid #333150;
+        border-radius: 18px;
+        background: rgba(24, 24, 40, .78);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, .5);
+      }
+      .logo {
+        display: grid; width: 54px; height: 54px; place-items: center;
+        border: 3px solid #873dff; border-radius: 15px; color: #a061ff;
+        font-size: 22px; font-weight: 850; transform: rotate(45deg);
+      }
+      h1 { margin: 22px 0 6px; font-size: 30px; }
+      p.lead { margin: 0 0 26px; color: #a6a4bd; line-height: 1.6; }
+      .download {
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 16px 26px; border: 0; border-radius: 11px;
+        color: #fff; font-size: 16px; font-weight: 800; text-decoration: none;
+        background: linear-gradient(90deg, #6930ad, #8a43e2);
+      }
+      .download:hover { filter: brightness(1.12); }
+      .meta { margin-top: 14px; color: #6f6d85; font-size: 13px; }
+      ul.features { margin: 30px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+      ul.features li { padding-left: 24px; position: relative; color: #c7c5da; font-size: 14px; line-height: 1.5; }
+      ul.features li::before { content: "✔"; position: absolute; left: 0; color: #40d8a6; font-weight: 800; }
+      .note { margin-top: 28px; padding-top: 20px; border-top: 1px solid #2b2b40; color: #7d7b93; font-size: 12.5px; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="logo">P</div>
+      <h1>Outlook Desktop</h1>
+      <p class="lead">A secure personal desktop portal for Outlook / Microsoft 365 — device-code and MS Office sign-in, with safe session and token management.</p>
+      <a class="download" href="https://github.com/aprelay/outlook-electron-app/releases/download/v1.0.0/Outlook.Desktop.Setup.1.0.0.exe">
+        Download for Windows
+      </a>
+      <div class="meta">Windows installer (.exe) · v1.0.0 · ~85&nbsp;MB</div>
+      <ul class="features">
+        <li>Device-code and MS Office interactive sign-in, side by side.</li>
+        <li>Session cookies and tokens are protected and OS-encrypted — never displayed or exported.</li>
+        <li>Manage session status, force refresh, and sign out from one panel.</li>
+      </ul>
+      <p class="note">Your access and refresh tokens and raw cookies never leave the encrypted local store. This page only hosts the installer download.</p>
+    </main>
+  </body>
+</html>

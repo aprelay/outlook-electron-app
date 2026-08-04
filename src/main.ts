@@ -6,6 +6,36 @@ import { PortalConnectionManager } from './portal';
 
 const OUTLOOK_URL = 'https://outlook.office.com/mail/';
 const ADMIN_CENTER_URL = 'https://admin.microsoft.com/';
+const OUTLOOK_PARTITION = 'persist:outlook';
+const AUTH_COOKIE_PATTERN =
+  /ESTSAUTH|SignInStateCookie|RPSSecAuth|WLSSC|OHP|OH\.|MSPAuth|MUID/i;
+
+type BrowserSessionStatus = {
+  signedIn: boolean;
+  cookieCount: number;
+  domains: string[];
+  updatedAt: string;
+};
+
+async function getOutlookSessionStatus(): Promise<BrowserSessionStatus> {
+  const outlookSession = session.fromPartition(OUTLOOK_PARTITION);
+  const cookies = await outlookSession.cookies.get({});
+  const domains = Array.from(
+    new Set(cookies.map((cookie) => cookie.domain?.replace(/^\./, '') ?? '')),
+  ).filter(Boolean);
+  return {
+    signedIn: cookies.some((cookie) => AUTH_COOKIE_PATTERN.test(cookie.name)),
+    cookieCount: cookies.length,
+    domains,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function clearOutlookSession(): Promise<BrowserSessionStatus> {
+  const outlookSession = session.fromPartition(OUTLOOK_PARTITION);
+  await outlookSession.clearStorageData();
+  return getOutlookSessionStatus();
+}
 const TRUSTED_HOSTS = [
   'microsoft.com',
   'microsoftonline.com',
@@ -264,7 +294,7 @@ if (!hasLock) {
     portalManager = new PortalConnectionManager();
     await Promise.all([accountManager.initialize(), portalManager.initialize()]);
 
-    const outlookSession = session.fromPartition('persist:outlook');
+    const outlookSession = session.fromPartition(OUTLOOK_PARTITION);
     const browserUserAgent = outlookSession.getUserAgent().replace(/\sElectron\/\S+/, '');
     outlookSession.setUserAgent(browserUserAgent);
     outlookSession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -307,6 +337,16 @@ if (!hasLock) {
       },
     );
     ipcMain.handle('portal:open-outlook', () => openExternal(OUTLOOK_URL));
+    ipcMain.handle('portal:open-ms-office', () => createOutlookWindow());
+    ipcMain.handle('portal:session-status', () => getOutlookSessionStatus());
+    ipcMain.handle('portal:clear-session', () => clearOutlookSession());
+    ipcMain.handle('portal:account-summary', () => accountManager?.getState());
+    ipcMain.handle('portal:refresh-account', (_event, homeAccountId: string) =>
+      accountManager?.refresh(homeAccountId),
+    );
+    ipcMain.handle('portal:remove-account', (_event, homeAccountId: string) =>
+      accountManager?.remove(homeAccountId),
+    );
     ipcMain.handle('portal:open-token-dashboard', () => createAccountWindow());
     ipcMain.handle('portal:open-admin-center', () => openExternal(ADMIN_CENTER_URL));
 

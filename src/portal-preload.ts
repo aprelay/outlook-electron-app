@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld('outlookPortal', {
     return () => ipcRenderer.removeListener('portal:device-code', listener);
   },
   openOutlook: () => ipcRenderer.invoke('portal:open-outlook'),
+  openMsOffice: () => ipcRenderer.invoke('portal:open-ms-office'),
+  getSessionStatus: () => ipcRenderer.invoke('portal:session-status'),
+  clearSession: () => ipcRenderer.invoke('portal:clear-session'),
+  getAccountSummary: () => ipcRenderer.invoke('portal:account-summary'),
+  refreshAccount: (homeAccountId: string) =>
+    ipcRenderer.invoke('portal:refresh-account', homeAccountId),
+  removeAccount: (homeAccountId: string) =>
+    ipcRenderer.invoke('portal:remove-account', homeAccountId),
   openTokenDashboard: () => ipcRenderer.invoke('portal:open-token-dashboard'),
   openAdminCenter: () => ipcRenderer.invoke('portal:open-admin-center'),
 });

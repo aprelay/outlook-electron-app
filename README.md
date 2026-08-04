@@ -8,7 +8,8 @@ A secure Electron portal for Microsoft Outlook browser sessions, a persistent de
 - Outlook browser launch using the user's normal browser profile and Microsoft cookies
 - Optional persistent Electron Outlook window with a dedicated session partition and browser-compatible user agent
 - Native desktop notifications and unread badge
-- Microsoft device-code sign-in for Graph mail permissions
+- Two portal sign-in methods, side by side: Microsoft device code and MS Office interactive login
+- On-portal management of the browser session (cookies) and device-code token: status, force refresh, clear/sign-out — never exporting raw cookies or tokens
 - Dashboard for session counts, scopes, expiry, refreshes, failures, and local audit history
 - Encrypted local token cache with force-refresh, per-account removal, and remove-all controls
 - Secure isolated web content (`sandbox`, context isolation, no Node.js access)
@@ -29,7 +30,12 @@ npm install
 npm start
 ```
 
-The app opens the local Outlook Portal. The right-side panel provides a visible **Sign in with device code** flow using your Microsoft Entra client ID and tenant. **Browser Sessions** launches official Outlook in your normal browser, where Chrome/Edge owns and persists the Microsoft session. The menu also provides an optional Electron Outlook window backed by the persistent `persist:outlook` partition. Enter your Office email and password only on Microsoft's sign-in page.
+The app opens the local Outlook Portal. The right-side panel offers two sign-in methods you can switch between:
+
+- **Device code** — enter your Microsoft Entra client ID and tenant and complete the short device code on Microsoft's site. The client ID defaults to Microsoft's public Azure CLI application so you never have to expose your own app registration.
+- **MS Office login** — open the official Microsoft sign-in in a persistent Electron Outlook window (`persist:outlook`), where cookies are kept in an OS-encrypted session so you stay logged in.
+
+Below the panel, a management area shows the status of both your **browser session (cookies)** and your **device-code token**, with actions to refresh status, force a token refresh, and clear the session or remove the token. Raw cookie values and raw access/refresh tokens are never displayed or exported — only status and lifecycle controls. Enter your Office email and password only on Microsoft's sign-in page.
 
 ## Configure the portal server
 
@@ -68,3 +74,17 @@ To create an unpacked application for development:
 ```bash
 npm run package:dir
 ```
+
+## Download and hosting
+
+- Download page (Cloudflare Pages): https://outlook-portal.pages.dev
+- Windows installer (GitHub Release): https://github.com/aprelay/outlook-electron-app/releases/latest
+
+The download page is static and lives in `cf-site/`. Deploy it with Wrangler:
+
+```bash
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  npx wrangler@3 pages deploy cf-site --project-name outlook-portal --branch main
+```
+
+Cloudflare Pages limits individual files to 25 MiB, so the ~85 MB installer is hosted as a GitHub Release asset and linked from the page rather than uploaded to Pages.

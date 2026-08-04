@@ -48,9 +48,27 @@ button:disabled { cursor: wait; opacity: .55; }
 .modal-actions button { padding: 13px; border: 1px solid #493a68; border-radius: 8px; color: #fff; background: #24243a; font-weight: 750; cursor: pointer; }
 .modal-actions .device-button { margin: 0; border: 0; background: #7838cb; }
 .modal-note { margin-bottom: 0; font-size: 11px; }
+.method-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 14px; }
+.method-tab { padding: 11px; border: 1px solid #333346; border-radius: 9px; color: #b9b7cc; background: #17172a; font-weight: 750; cursor: pointer; }
+.method-tab.is-active { border-color: #8a43e2; color: #fff; background: rgba(122, 58, 210, .32); }
+.method-panel[hidden] { display: none; }
+.method-hint { margin: 0 0 6px; color: #9a98ad; font-size: 12px; line-height: 1.5; text-align: left; }
+.manage-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 22px 55px 40px; background: #11111e; }
+.manage-card { padding: 20px; border: 1px solid #2c2c40; border-radius: 12px; background: rgba(30, 30, 48, .7); }
+.manage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.manage-head strong { font-size: 15px; }
+.badge { padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+.badge.ok { color: #06301f; background: #40d8a6; }
+.badge.muted { color: #c7c5da; background: #35354c; }
+.manage-detail { min-height: 34px; margin: 0 0 14px; color: #a6a4ba; font-size: 12.5px; line-height: 1.5; }
+.manage-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.manage-actions button { padding: 11px; border: 1px solid #3c3c58; border-radius: 8px; color: #fff; background: #23233a; font-weight: 750; cursor: pointer; }
+.manage-actions button:hover { filter: brightness(1.12); }
+.manage-actions .danger { border-color: #6a2b3a; background: rgba(120, 40, 55, .55); }
 
 @media (max-width: 1050px) {
   .feature-side, .connect-side { padding: 30px; }
   .features { gap: 16px; }
   .feature-card { min-height: 145px; padding: 24px; }
+  .manage-bar { grid-template-columns: 1fr; padding: 20px 30px 32px; }
 }

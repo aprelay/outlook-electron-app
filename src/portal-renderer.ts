@@ -11,6 +11,24 @@ type DeviceCodePrompt = {
   message: string;
 };
 
+type BrowserSessionStatus = {
+  signedIn: boolean;
+  cookieCount: number;
+  domains: string[];
+  updatedAt: string;
+};
+
+type AccountSummary = {
+  homeAccountId: string;
+  username: string;
+  expiresOn: string | null;
+  status: 'active' | 'expired' | 'unknown';
+};
+
+type AccountState = {
+  accounts: AccountSummary[];
+};
+
 type PortalApi = {
   getConfig: () => Promise<PortalConfig>;
   saveConfig: (serverUrl: string, accessKey: string) => Promise<PortalConfig>;
@@ -20,6 +38,12 @@ type PortalApi = {
   openExternal: (url: string) => Promise<void>;
   onDeviceCode: (callback: (prompt: DeviceCodePrompt) => void) => () => void;
   openOutlook: () => Promise<void>;
+  openMsOffice: () => Promise<void>;
+  getSessionStatus: () => Promise<BrowserSessionStatus>;
+  clearSession: () => Promise<BrowserSessionStatus>;
+  getAccountSummary: () => Promise<AccountState>;
+  refreshAccount: (homeAccountId: string) => Promise<{ account: AccountSummary }>;
+  removeAccount: (homeAccountId: string) => Promise<AccountState>;
   openTokenDashboard: () => Promise<void>;
   openAdminCenter: () => Promise<void>;
 };
@@ -50,8 +74,22 @@ const deviceMessage = requiredElement<HTMLParagraphElement>('#device-message');
 const deviceCode = requiredElement<HTMLElement>('#device-code');
 const copyDeviceCodeButton = requiredElement<HTMLButtonElement>('#copy-device-code');
 const openDeviceLoginButton = requiredElement<HTMLButtonElement>('#open-device-login');
+const methodDeviceTab = requiredElement<HTMLButtonElement>('#method-device');
+const methodOfficeTab = requiredElement<HTMLButtonElement>('#method-office');
+const devicePanel = requiredElement<HTMLDivElement>('#device-panel');
+const officePanel = requiredElement<HTMLDivElement>('#office-panel');
+const officeSignInButton = requiredElement<HTMLButtonElement>('#office-sign-in');
+const sessionBadge = requiredElement<HTMLElement>('#session-badge');
+const sessionDetail = requiredElement<HTMLParagraphElement>('#session-detail');
+const sessionRefreshButton = requiredElement<HTMLButtonElement>('#session-refresh');
+const sessionClearButton = requiredElement<HTMLButtonElement>('#session-clear');
+const tokenBadge = requiredElement<HTMLElement>('#token-badge');
+const tokenDetail = requiredElement<HTMLParagraphElement>('#token-detail');
+const tokenRefreshButton = requiredElement<HTMLButtonElement>('#token-refresh');
+const tokenRemoveButton = requiredElement<HTMLButtonElement>('#token-remove');
 
 let currentDevicePrompt: DeviceCodePrompt | null = null;
+let currentAccount: AccountSummary | null = null;
 
 function setMessage(message: string, isError = false): void {
   messageElement.textContent = message;
@@ -143,13 +181,106 @@ portalBridge.onDeviceCode((prompt) => {
   deviceModal.hidden = false;
 });
 
+function selectMethod(method: 'device' | 'office'): void {
+  const isDevice = method === 'device';
+  methodDeviceTab.classList.toggle('is-active', isDevice);
+  methodOfficeTab.classList.toggle('is-active', !isDevice);
+  methodDeviceTab.setAttribute('aria-selected', String(isDevice));
+  methodOfficeTab.setAttribute('aria-selected', String(!isDevice));
+  devicePanel.hidden = !isDevice;
+  officePanel.hidden = isDevice;
+}
+
+methodDeviceTab.addEventListener('click', () => selectMethod('device'));
+methodOfficeTab.addEventListener('click', () => selectMethod('office'));
+
+officeSignInButton.addEventListener('click', () => {
+  void runAction(async () => {
+    await portalBridge.openMsOffice();
+    setMessage('Opened the Microsoft sign-in window. Complete login there to persist your session.');
+    await refreshSessionStatus();
+  });
+});
+
+function renderSessionStatus(status: BrowserSessionStatus): void {
+  sessionBadge.textContent = status.signedIn ? 'Signed in' : 'Signed out';
+  sessionBadge.classList.toggle('ok', status.signedIn);
+  sessionBadge.classList.toggle('muted', !status.signedIn);
+  sessionDetail.textContent = status.signedIn
+    ? `Active Microsoft cookies stored (${status.cookieCount} across ${status.domains.length} domain(s)). Raw cookie values are never shown.`
+    : `No Microsoft sign-in cookies stored (${status.cookieCount} cookie(s)).`;
+}
+
+function renderTokenStatus(account: AccountSummary | null): void {
+  currentAccount = account;
+  const hasAccount = Boolean(account);
+  tokenRefreshButton.disabled = !hasAccount;
+  tokenRemoveButton.disabled = !hasAccount;
+  if (!account) {
+    tokenBadge.textContent = 'No account';
+    tokenBadge.classList.remove('ok');
+    tokenBadge.classList.add('muted');
+    tokenDetail.textContent = 'No device-code account connected yet.';
+    return;
+  }
+  const active = account.status === 'active';
+  tokenBadge.textContent = active ? 'Active' : account.status === 'expired' ? 'Expired' : 'Unknown';
+  tokenBadge.classList.toggle('ok', active);
+  tokenBadge.classList.toggle('muted', !active);
+  const expiry = account.expiresOn
+    ? `expires ${new Date(account.expiresOn).toLocaleString()}`
+    : 'expiry unknown';
+  tokenDetail.textContent = `${account.username} — ${expiry}. Raw access/refresh tokens are never exposed.`;
+}
+
+async function refreshSessionStatus(): Promise<void> {
+  renderSessionStatus(await portalBridge.getSessionStatus());
+}
+
+sessionRefreshButton.addEventListener('click', () => {
+  void runAction(refreshSessionStatus);
+});
+
+sessionClearButton.addEventListener('click', () => {
+  void runAction(async () => {
+    renderSessionStatus(await portalBridge.clearSession());
+    setMessage('Cleared the Outlook browser session.');
+  });
+});
+
+tokenRefreshButton.addEventListener('click', () => {
+  void runAction(async () => {
+    if (!currentAccount) {
+      return;
+    }
+    const result = await portalBridge.refreshAccount(currentAccount.homeAccountId);
+    renderTokenStatus(result.account);
+    setMessage(`Refreshed the token for ${result.account.username}.`);
+  });
+});
+
+tokenRemoveButton.addEventListener('click', () => {
+  void runAction(async () => {
+    if (!currentAccount) {
+      return;
+    }
+    const state = await portalBridge.removeAccount(currentAccount.homeAccountId);
+    renderTokenStatus(state.accounts[0] ?? null);
+    setMessage('Removed the device-code token.');
+  });
+});
+
 void runAction(async () => {
-  const [portalConfig, deviceConfig] = await Promise.all([
+  const [portalConfig, deviceConfig, sessionStatus, accountState] = await Promise.all([
     portalBridge.getConfig(),
     portalBridge.getDeviceConfig(),
+    portalBridge.getSessionStatus(),
+    portalBridge.getAccountSummary(),
   ]);
   renderConfig(portalConfig);
-  deviceClientIdInput.value = deviceConfig.clientId;
-  deviceTenantInput.value = deviceConfig.tenantId;
+  deviceClientIdInput.value = deviceConfig.clientId || deviceClientIdInput.value;
+  deviceTenantInput.value = deviceConfig.tenantId || deviceTenantInput.value;
+  renderSessionStatus(sessionStatus);
+  renderTokenStatus(accountState.accounts[0] ?? null);
 });
 }
