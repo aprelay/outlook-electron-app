@@ -2,6 +2,10 @@
 
 This Worker exposes three small debugging endpoints:
 
+- `GET /oauth/authorize` redirects the local browser to Microsoft Entra sign-in
+  and MFA using authorization-code flow with PKCE.
+- `GET /oauth/callback` completes the PKCE exchange and records safe auth
+  metadata. The temporary PKCE state expires after five minutes.
 - `GET /oauth/device-code` starts the Microsoft Entra OAuth 2.0 device-code flow.
 - `POST /oauth/token` polls the flow with `{ "device_code": "..." }`.
 - `GET /session/inspect?path=/owa/` makes a controlled request to
@@ -36,6 +40,13 @@ The device-code endpoint returns Microsoft's `user_code`, `verification_uri`,
 and polling interval. The Worker does not store device codes or tokens. The
 default scope is limited to identity claims; use a tenant-owned app and
 explicit delegated Outlook scopes if the diagnostic needs an Outlook API token.
+
+The dashboard's **Sign in with Microsoft** button keeps the sign-in and MFA
+session in the local browser. The Worker uses a public-client authorization-code
+flow with PKCE and records only a successful-authentication event. Register the
+Worker callback URL (`https://<worker-host>/oauth/callback`) in the Entra
+application, and use an enterprise-owned public client for production. Raw
+Microsoft or Outlook cookies are never captured, returned, or persisted.
 
 ## Deploy
 

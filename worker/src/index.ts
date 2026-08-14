@@ -109,9 +109,9 @@ function dashboard(): Response {
     </section>
     <section class="grid">
       <article class="card">
-        <div class="card-head"><div><h3>01 · Identity handshake</h3><p>Start Microsoft Entra device-code authentication.</p></div><span class="number">OAuth 2.0</span></div>
-        <div class="actions"><button id="start">Start device flow</button><a id="verify" class="secondary" hidden target="_blank" rel="noreferrer">Open verification</a></div>
-        <div id="authResult" class="result">Ready to begin. Tokens are never displayed by this dashboard.</div>
+        <div class="card-head"><div><h3>01 · Identity handshake</h3><p>Complete Microsoft sign-in and MFA in this browser.</p></div><span class="number">OAuth 2.0</span></div>
+        <div class="actions"><button id="startBrowser">Sign in with Microsoft</button><button id="start" class="secondary">Start device flow</button><a id="verify" class="secondary" hidden target="_blank" rel="noreferrer">Open verification</a></div>
+        <div id="authResult" class="result">Ready to begin. Sign-in cookies stay in this browser; tokens are never displayed.</div>
       </article>
       <article class="card">
         <div class="card-head"><div><h3>02 · Session inspection</h3><p>Probe a fixed Outlook origin and review cookie metadata.</p></div><span class="number">OWA</span></div>
@@ -138,6 +138,7 @@ function dashboard(): Response {
   </main>
   <script>
     const start = document.querySelector("#start");
+    const startBrowser = document.querySelector("#startBrowser");
     const verify = document.querySelector("#verify");
     const authResult = document.querySelector("#authResult");
     const inspect = document.querySelector("#inspect");
@@ -148,6 +149,7 @@ function dashboard(): Response {
     const historyResult = document.querySelector("#historyResult");
     let pollTimer;
     const setResult = (element, text, tone) => { element.textContent = text; element.className = "result" + (tone ? " " + tone : ""); };
+    startBrowser.addEventListener("click", () => { window.location.href = "/oauth/authorize"; });
     start.addEventListener("click", async () => {
       start.disabled = true;
       setResult(authResult, "Requesting device code…");
@@ -204,6 +206,9 @@ function dashboard(): Response {
       loadHistory.disabled = false;
     });
     loadHistory.click();
+    const authStatus = new URLSearchParams(window.location.search).get("auth");
+    if (authStatus === "authenticated") setResult(authResult, "Microsoft sign-in and MFA completed. Authentication cookies remain in this browser; safe diagnostics were recorded.", "good");
+    if (authStatus === "error") setResult(authResult, "Microsoft sign-in could not be completed. Review the callback error and try again.", "warn");
   </script>
 </body>
 </html>`;
@@ -482,6 +487,114 @@ async function token(request: Request, env: Env): Promise<Response> {
   return json(responseData, response.status);
 }
 
+function base64Url(bytes: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function randomBase64Url(length = 32): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return base64Url(bytes.buffer);
+}
+
+async function authorize(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+  if (!env.DEBUG_LOGS) {
+    return json({ error: "oauth_browser_flow_requires_kv" }, 503);
+  }
+
+  const tenant = env.MICROSOFT_TENANT || DEFAULT_TENANT;
+  const clientId = env.MICROSOFT_CLIENT_ID || DEFAULT_PUBLIC_CLIENT_ID;
+  const scope = env.MICROSOFT_SCOPE || DEFAULT_SCOPE;
+  const state = randomBase64Url();
+  const verifier = randomBase64Url(48);
+  const challenge = base64Url(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))
+  );
+  const redirectUri = new URL("/oauth/callback", request.url).toString();
+
+  await env.DEBUG_LOGS.put(
+    `oauth:${state}`,
+    JSON.stringify({ verifier, redirectUri, tenant, clientId }),
+    { expirationTtl: 300 }
+  );
+
+  const endpoint = new URL(
+    `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/authorize`
+  );
+  endpoint.search = new URLSearchParams({
+    client_id: clientId,
+    response_type: "code",
+    redirect_uri: redirectUri,
+    response_mode: "query",
+    scope,
+    state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+
+  return Response.redirect(endpoint.toString(), 302);
+}
+
+async function oauthCallback(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+  const url = new URL(request.url);
+  const error = url.searchParams.get("error");
+  const state = url.searchParams.get("state");
+  if (error) {
+    return Response.redirect(new URL("/?auth=error", request.url).toString(), 302);
+  }
+  if (!state || !env.DEBUG_LOGS) {
+    return Response.redirect(new URL("/?auth=error", request.url).toString(), 302);
+  }
+
+  const stateKey = `oauth:${state}`;
+  const pending = await env.DEBUG_LOGS.get<{
+    verifier: string;
+    redirectUri: string;
+    tenant: string;
+    clientId: string;
+  }>(stateKey, "json");
+  await env.DEBUG_LOGS.delete(stateKey);
+  const code = url.searchParams.get("code");
+  if (!pending || !code) {
+    return Response.redirect(new URL("/?auth=error", request.url).toString(), 302);
+  }
+
+  const endpoint = `https://login.microsoftonline.com/${encodeURIComponent(
+    pending.tenant
+  )}/oauth2/v2.0/token`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: pending.clientId,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: pending.redirectUri,
+      code_verifier: pending.verifier,
+    }),
+  });
+  const responseData = (await response.json()) as Record<string, unknown>;
+  if (!response.ok || typeof responseData.access_token !== "string") {
+    return Response.redirect(new URL("/?auth=error", request.url).toString(), 302);
+  }
+
+  await saveHistory(env, {
+    event: "oauth_browser_authenticated",
+    timestamp: new Date().toISOString(),
+    tenant: pending.tenant,
+    scope: env.MICROSOFT_SCOPE || DEFAULT_SCOPE,
+  });
+  return Response.redirect(
+    new URL("/?auth=authenticated", request.url).toString(),
+    302
+  );
+}
+
 async function inspectSession(
   request: Request,
   env: Env,
@@ -576,6 +689,10 @@ export default {
             ? await history(env)
           : path === "/oauth/device-code"
             ? await deviceCode(request, env)
+          : path === "/oauth/authorize"
+            ? await authorize(request, env)
+          : path === "/oauth/callback"
+            ? await oauthCallback(request, env)
           : path === "/oauth/token"
             ? await token(request, env)
             : path === "/session/inspect"
