@@ -120,6 +120,7 @@ function dashboard(): Response {
         <div class="actions">
           <button id="inspect">Inspect office365.com</button>
           <button id="inspectOffice" class="secondary">Inspect office.com</button>
+          <button id="inspectCloud" class="secondary">Inspect cloud.microsoft</button>
         </div>
         <div id="sessionResult" class="result">No inspection run yet.</div>
       </article>
@@ -129,7 +130,7 @@ function dashboard(): Response {
         <div id="historyResult" class="result">No saved snapshots loaded.</div>
       </article>
       <article class="card full">
-        <div class="card-head"><div><h3>Diagnostic policy</h3><p>Fixed upstreams: outlook.office365.com and outlook.office.com · Cookie values are excluded from responses and logs.</p></div><span class="number">Read-only</span></div>
+        <div class="card-head"><div><h3>Diagnostic policy</h3><p>Fixed upstreams: outlook.office365.com, outlook.office.com, and outlook.cloud.microsoft · Cookie values are excluded from responses and logs.</p></div><span class="number">Read-only</span></div>
         <div class="result">Use Cloudflare Access or an equivalent control before sharing this dashboard. Clear any pasted cookie header immediately after an authorized test.</div>
       </article>
     </section>
@@ -141,6 +142,7 @@ function dashboard(): Response {
     const authResult = document.querySelector("#authResult");
     const inspect = document.querySelector("#inspect");
     const inspectOffice = document.querySelector("#inspectOffice");
+    const inspectCloud = document.querySelector("#inspectCloud");
     const sessionResult = document.querySelector("#sessionResult");
     const loadHistory = document.querySelector("#loadHistory");
     const historyResult = document.querySelector("#historyResult");
@@ -170,11 +172,12 @@ function dashboard(): Response {
         pollTimer = setTimeout(poll, interval);
       } catch (error) { setResult(authResult, error.message, "warn"); start.disabled = false; }
     });
-    const inspectSession = async (endpoint, button, label) => {
+    const inspectSession = async (endpoint, button, label, defaultPath) => {
       button.disabled = true;
       setResult(sessionResult, "Inspecting " + label + " session…");
       try {
-        const path = document.querySelector("#path").value || "/owa/";
+        const enteredPath = document.querySelector("#path").value;
+        const path = defaultPath === "/mail/" ? defaultPath : enteredPath || defaultPath;
         const cookie = document.querySelector("#cookie").value;
         const headers = cookie ? {"X-Debug-Cookie": cookie} : {};
         const response = await fetch(endpoint + "?path=" + encodeURIComponent(path), {headers});
@@ -186,8 +189,9 @@ function dashboard(): Response {
       button.disabled = false;
       loadHistory.click();
     };
-    inspect.addEventListener("click", () => inspectSession("/session/inspect", inspect, "outlook.office365.com"));
-    inspectOffice.addEventListener("click", () => inspectSession("/session/inspect-office", inspectOffice, "outlook.office.com"));
+    inspect.addEventListener("click", () => inspectSession("/session/inspect", inspect, "outlook.office365.com", "/owa/"));
+    inspectOffice.addEventListener("click", () => inspectSession("/session/inspect-office", inspectOffice, "outlook.office.com", "/owa/"));
+    inspectCloud.addEventListener("click", () => inspectSession("/session/inspect-cloud-mail", inspectCloud, "outlook.cloud.microsoft/mail", "/mail/"));
     loadHistory.addEventListener("click", async () => {
       loadHistory.disabled = true;
       try {
@@ -578,9 +582,23 @@ export default {
               ? await inspectSession(request, env, OUTLOOK_ORIGIN, "outlook.office365.com")
               : path === "/session/inspect-office"
                 ? await inspectSession(request, env, "https://outlook.office.com", "outlook.office.com")
+                : path === "/session/inspect-cloud-mail"
+                  ? await inspectSession(
+                      request,
+                      env,
+                      "https://outlook.cloud.microsoft",
+                      "outlook.cloud.microsoft/mail"
+                    )
               : json({
                   service: "outlook-cookie-debugger",
-                  endpoints: ["/oauth/device-code", "/oauth/token", "/session/inspect"],
+                  endpoints: [
+                    "/oauth/device-code",
+                    "/oauth/token",
+                    "/session/inspect",
+                    "/session/inspect-office",
+                    "/session/inspect-cloud-mail",
+                    "/history",
+                  ],
                 });
 
       if (origin) response.headers.set("access-control-allow-origin", origin);

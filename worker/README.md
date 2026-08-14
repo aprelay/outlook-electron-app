@@ -8,6 +8,8 @@ This Worker exposes three small debugging endpoints:
   `outlook.office365.com` and reports request-cookie and `Set-Cookie` metadata.
 - `GET /session/inspect-office?path=/owa/` performs the same probe against
   `outlook.office.com`.
+- `GET /session/inspect-cloud-mail?path=/mail/` probes
+  `outlook.cloud.microsoft/mail/`.
 - `GET /history` returns recent safe diagnostic snapshots retained for 30 days.
 
 Cookie values, OAuth tokens, and device codes are never persisted or written to
