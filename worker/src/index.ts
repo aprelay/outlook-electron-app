@@ -555,6 +555,7 @@ async function authorize(request: Request, env: Env): Promise<Response> {
     response_mode: "query",
     scope,
     state,
+    prompt: "login",
     code_challenge: challenge,
     code_challenge_method: "S256",
   }).toString();

@@ -50,6 +50,8 @@ this Worker. When `MICROSOFT_CLIENT_ID` is set to an enterprise-owned public
 client, it uses authorization-code flow with PKCE. Register the Worker callback
 URL (`https://<worker-host>/oauth/callback`) in that Entra application. Raw
 Microsoft or Outlook cookies are never captured, returned, or persisted.
+The browser authorization request includes `prompt=login` so an existing local
+Microsoft session is not silently reused.
 
 The dashboard's **Open Outlook sign-in** button opens
 `https://outlook.office.com/mail/` directly in a new local browser tab. Complete
