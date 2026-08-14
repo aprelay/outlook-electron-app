@@ -51,6 +51,12 @@ client, it uses authorization-code flow with PKCE. Register the Worker callback
 URL (`https://<worker-host>/oauth/callback`) in that Entra application. Raw
 Microsoft or Outlook cookies are never captured, returned, or persisted.
 
+The dashboard's **Open Outlook sign-in** button opens
+`https://outlook.office.com/mail/` directly in a new local browser tab. Complete
+email sign-in and MFA there; the browser keeps the resulting session cookies
+locally, and the Worker can only receive safe metadata from an authorized
+diagnostic request.
+
 ## Deploy
 
 From the repository root:

@@ -110,7 +110,7 @@ function dashboard(): Response {
     <section class="grid">
       <article class="card">
         <div class="card-head"><div><h3>01 · Identity handshake</h3><p>Complete Microsoft sign-in and MFA in this browser.</p></div><span class="number">OAuth 2.0</span></div>
-        <div class="actions"><button id="startBrowser">Sign in with Microsoft</button><button id="start" class="secondary">Start device flow</button><a id="verify" class="secondary" hidden target="_blank" rel="noreferrer">Open verification</a></div>
+        <div class="actions"><button id="openOutlook">Open Outlook sign-in</button><button id="startBrowser" class="secondary">Sign in with Microsoft</button><button id="start" class="secondary">Start device flow</button><a id="verify" class="secondary" hidden target="_blank" rel="noreferrer">Open verification</a></div>
         <div id="authResult" class="result">Ready to begin. Sign-in cookies stay in this browser; tokens are never displayed.</div>
       </article>
       <article class="card">
@@ -138,6 +138,7 @@ function dashboard(): Response {
   </main>
   <script>
     const start = document.querySelector("#start");
+    const openOutlook = document.querySelector("#openOutlook");
     const startBrowser = document.querySelector("#startBrowser");
     const verify = document.querySelector("#verify");
     const authResult = document.querySelector("#authResult");
@@ -149,6 +150,10 @@ function dashboard(): Response {
     const historyResult = document.querySelector("#historyResult");
     let pollTimer;
     const setResult = (element, text, tone) => { element.textContent = text; element.className = "result" + (tone ? " " + tone : ""); };
+    openOutlook.addEventListener("click", () => {
+      window.open("https://outlook.office.com/mail/", "_blank", "noopener,noreferrer");
+      setResult(authResult, "Outlook opened in a new browser tab. Complete email sign-in and MFA there; cookies remain local to that session.");
+    });
     startBrowser.addEventListener("click", async () => {
       startBrowser.disabled = true;
       try {
