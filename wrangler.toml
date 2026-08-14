@@ -1,0 +1,9 @@
+name = "outlook-cookie-debugger"
+main = "worker/src/index.ts"
+compatibility_date = "2025-10-11"
+
+[vars]
+MICROSOFT_TENANT = "organizations"
+MICROSOFT_SCOPE = "openid profile email offline_access https://outlook.office365.com/.default"
+# Set this to the exact origin of the debugging UI when it is hosted separately.
+# ALLOWED_ORIGIN = "https://debug.example.com"
