@@ -11,6 +11,182 @@ const DEFAULT_SCOPE =
   "openid profile email offline_access https://outlook.office365.com/.default";
 const MAX_COOKIE_VALUE_LENGTH = 4096;
 
+function dashboard(): Response {
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Outlook Session Diagnostics</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: #0d1b2d;
+      --panel-strong: #10243a;
+      --border: #203951;
+      --text: #e7eef7;
+      --muted: #8da2b8;
+      --blue: #46a7ff;
+      --green: #52d69a;
+      --amber: #f4c66d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: radial-gradient(circle at 80% 0%, #12345a 0, var(--bg) 34rem);
+      color: var(--text);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    .shell { max-width: 1180px; margin: 0 auto; padding: 28px 22px 52px; }
+    .topbar { display: flex; justify-content: space-between; gap: 20px; align-items: center; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark {
+      width: 38px; height: 38px; display: grid; place-items: center;
+      border: 1px solid #2d6ca0; border-radius: 10px; color: var(--blue);
+      background: #0b2843; font-weight: 800; letter-spacing: -.08em;
+    }
+    .eyebrow { margin: 0; color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 2px 0 0; font-size: 21px; letter-spacing: -.02em; }
+    .status { color: var(--green); font-size: 12px; }
+    .hero { margin: 58px 0 30px; max-width: 720px; }
+    .hero h2 { margin: 0 0 10px; font-size: clamp(30px, 5vw, 48px); line-height: 1.05; letter-spacing: -.045em; }
+    .hero p { margin: 0; color: var(--muted); font-size: 15px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .card {
+      padding: 22px; border: 1px solid var(--border); border-radius: 15px;
+      background: linear-gradient(145deg, rgba(16,36,58,.94), rgba(10,24,40,.94));
+      box-shadow: 0 18px 45px rgba(0,0,0,.16);
+    }
+    .card.full { grid-column: 1 / -1; }
+    .card-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
+    .card h3 { margin: 0 0 4px; font-size: 16px; }
+    .card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .number { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    label { display: block; margin: 0 0 7px; color: #b8c8d9; font-size: 12px; font-weight: 700; }
+    input, textarea {
+      width: 100%; border: 1px solid #2a4862; border-radius: 8px; outline: none;
+      background: #091725; color: var(--text); padding: 11px 12px; font: inherit;
+    }
+    input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(70,167,255,.12); }
+    textarea { min-height: 76px; resize: vertical; }
+    .field { margin-bottom: 15px; }
+    button {
+      border: 1px solid #338bd0; border-radius: 8px; padding: 10px 15px;
+      background: var(--blue); color: #04111d; cursor: pointer; font: inherit; font-weight: 800;
+    }
+    button:hover { background: #73bcff; }
+    button:disabled { cursor: wait; opacity: .55; }
+    .secondary { border-color: #35536d; background: transparent; color: var(--text); }
+    .secondary:hover { background: #17324d; }
+    .actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+    .result {
+      margin-top: 17px; min-height: 44px; padding: 12px; border: 1px solid #1e3a53;
+      border-radius: 8px; background: #081521; color: var(--muted); white-space: pre-wrap;
+      overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .result.good { border-color: #287a5d; color: var(--green); }
+    .result.warn { border-color: #856c36; color: var(--amber); }
+    .footer { margin-top: 20px; color: #657c92; font-size: 12px; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .card.full { grid-column: auto; } .hero { margin-top: 42px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">O/</div>
+        <div><p class="eyebrow">Enterprise diagnostics</p><h1>Outlook session control plane</h1></div>
+      </div>
+      <div class="status">● Worker online</div>
+    </header>
+    <section class="hero">
+      <h2>Understand session persistence without exposing credentials.</h2>
+      <p>Run an authorized sign-in check and inspect Outlook cookie attributes, flags, and lifecycle metadata from one controlled workspace.</p>
+    </section>
+    <section class="grid">
+      <article class="card">
+        <div class="card-head"><div><h3>01 · Identity handshake</h3><p>Start Microsoft Entra device-code authentication.</p></div><span class="number">OAuth 2.0</span></div>
+        <div class="actions"><button id="start">Start device flow</button><a id="verify" class="secondary" hidden target="_blank" rel="noreferrer">Open verification</a></div>
+        <div id="authResult" class="result">Ready to begin. Tokens are never displayed by this dashboard.</div>
+      </article>
+      <article class="card">
+        <div class="card-head"><div><h3>02 · Session inspection</h3><p>Probe a fixed Outlook origin and review cookie metadata.</p></div><span class="number">OWA</span></div>
+        <div class="field"><label for="path">Outlook path</label><input id="path" value="/owa/" spellcheck="false"></div>
+        <div class="field"><label for="cookie">Optional cookie header <span style="font-weight:400;color:#71889d">(not stored)</span></label><textarea id="cookie" placeholder="Paste only for an authorized test; values are not returned or logged."></textarea></div>
+        <button id="inspect">Inspect session</button>
+        <div id="sessionResult" class="result">No inspection run yet.</div>
+      </article>
+      <article class="card full">
+        <div class="card-head"><div><h3>Diagnostic policy</h3><p>Fixed upstream: outlook.office365.com · Cookie values are excluded from responses and logs.</p></div><span class="number">Read-only</span></div>
+        <div class="result">Use Cloudflare Access or an equivalent control before sharing this dashboard. Clear any pasted cookie header immediately after an authorized test.</div>
+      </article>
+    </section>
+    <p class="footer">Outlook Session Diagnostics · Internal troubleshooting surface</p>
+  </main>
+  <script>
+    const start = document.querySelector("#start");
+    const verify = document.querySelector("#verify");
+    const authResult = document.querySelector("#authResult");
+    const inspect = document.querySelector("#inspect");
+    const sessionResult = document.querySelector("#sessionResult");
+    let pollTimer;
+    const setResult = (element, text, tone) => { element.textContent = text; element.className = "result" + (tone ? " " + tone : ""); };
+    start.addEventListener("click", async () => {
+      start.disabled = true;
+      setResult(authResult, "Requesting device code…");
+      try {
+        const response = await fetch("/oauth/device-code");
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error_description || data.error || "Device flow unavailable");
+        verify.href = data.verification_uri || data.verification_uri_complete;
+        verify.textContent = "Open verification · " + (data.user_code || "");
+        verify.hidden = false;
+        setResult(authResult, "Enter the displayed code in Microsoft sign-in. Polling authorization status…");
+        clearInterval(pollTimer);
+        const interval = Math.max((data.interval || 5) * 1000, 5000);
+        const poll = async () => {
+          const tokenResponse = await fetch("/oauth/token", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({device_code: data.device_code}) });
+          const token = await tokenResponse.json();
+          if (token.access_token) { clearInterval(pollTimer); setResult(authResult, "Authentication completed. Access token received and withheld from the dashboard.", "good"); start.disabled = false; }
+          else if (token.error === "authorization_pending") { setResult(authResult, "Waiting for Microsoft sign-in confirmation…"); pollTimer = setTimeout(poll, interval); }
+          else if (token.error === "slow_down") { pollTimer = setTimeout(poll, interval + 5000); }
+          else if (token.error) { setResult(authResult, token.error_description || token.error, "warn"); start.disabled = false; }
+        };
+        pollTimer = setTimeout(poll, interval);
+      } catch (error) { setResult(authResult, error.message, "warn"); start.disabled = false; }
+    });
+    inspect.addEventListener("click", async () => {
+      inspect.disabled = true;
+      setResult(sessionResult, "Inspecting Outlook session…");
+      try {
+        const path = document.querySelector("#path").value || "/owa/";
+        const cookie = document.querySelector("#cookie").value;
+        const headers = cookie ? {"X-Debug-Cookie": cookie} : {};
+        const response = await fetch("/session/inspect?path=" + encodeURIComponent(path), {headers});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Inspection failed");
+        document.querySelector("#cookie").value = "";
+        setResult(sessionResult, JSON.stringify(data, null, 2), "good");
+      } catch (error) { setResult(sessionResult, error.message, "warn"); }
+      inspect.disabled = false;
+    });
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    },
+  });
+}
+
 type CookieMetadata = {
   name: string;
   valueLength: number;
@@ -152,8 +328,11 @@ function parseSetCookie(header: string): CookieMetadata | null {
   return metadata;
 }
 
-function cookieSummary(request: Request, response: Response) {
-  const requestCookies = parseCookieHeader(request.headers.get("Cookie"));
+function cookieSummary(
+  response: Response,
+  cookieHeader: string | null
+) {
+  const requestCookies = parseCookieHeader(cookieHeader);
   const responseCookies = setCookieHeaders(response.headers)
     .map(parseSetCookie)
     .filter((cookie): cookie is CookieMetadata => cookie !== null);
@@ -256,24 +435,27 @@ async function inspectSession(request: Request): Promise<Response> {
 
   const upstreamUrl = new URL(requestedPath, OUTLOOK_ORIGIN);
   const upstreamHeaders = new Headers();
+  const cookieHeader =
+    request.headers.get("X-Debug-Cookie") || request.headers.get("Cookie");
   for (const name of ["accept", "accept-language", "user-agent", "cookie"]) {
     const value = request.headers.get(name);
     if (value) upstreamHeaders.set(name, value);
   }
+  if (cookieHeader) upstreamHeaders.set("cookie", cookieHeader);
 
   const upstream = await fetch(upstreamUrl, {
     method: request.method,
     headers: upstreamHeaders,
     redirect: "manual",
   });
-  const cookies = cookieSummary(request, upstream);
+  const cookies = cookieSummary(upstream, cookieHeader);
   const logRecord = {
     event: "outlook_session_cookie_debug",
     timestamp: new Date().toISOString(),
     request: {
       method: request.method,
       path: requestedPath,
-      hasCookieHeader: Boolean(request.headers.get("Cookie")),
+      hasCookieHeader: Boolean(cookieHeader),
     },
     upstream: {
       status: upstream.status,
@@ -316,7 +498,9 @@ export default {
     const path = new URL(request.url).pathname;
     try {
       const response =
-        path === "/oauth/device-code"
+        path === "/"
+          ? dashboard()
+          : path === "/oauth/device-code"
           ? await deviceCode(request, env)
           : path === "/oauth/token"
             ? await token(request, env)
