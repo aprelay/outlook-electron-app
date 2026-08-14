@@ -1,14 +1,14 @@
 interface Env {
-  MICROSOFT_CLIENT_ID: string;
+  MICROSOFT_CLIENT_ID?: string;
   MICROSOFT_TENANT?: string;
   MICROSOFT_SCOPE?: string;
   ALLOWED_ORIGIN?: string;
 }
 
 const OUTLOOK_ORIGIN = "https://outlook.office365.com";
+const DEFAULT_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
 const DEFAULT_TENANT = "organizations";
-const DEFAULT_SCOPE =
-  "openid profile email offline_access https://outlook.office365.com/.default";
+const DEFAULT_SCOPE = "openid profile email offline_access";
 const MAX_COOKIE_VALUE_LENGTH = 4096;
 
 function dashboard(): Response {
@@ -351,16 +351,13 @@ function cookieSummary(
 
 async function deviceCode(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-  if (!env.MICROSOFT_CLIENT_ID) {
-    return json({ error: "missing_MICROSOFT_CLIENT_ID" }, 500);
-  }
 
   const tenant = env.MICROSOFT_TENANT || DEFAULT_TENANT;
   const endpoint = `https://login.microsoftonline.com/${encodeURIComponent(
     tenant
   )}/oauth2/v2.0/devicecode`;
   const body = new URLSearchParams({
-    client_id: env.MICROSOFT_CLIENT_ID,
+    client_id: env.MICROSOFT_CLIENT_ID || DEFAULT_PUBLIC_CLIENT_ID,
     scope: env.MICROSOFT_SCOPE || DEFAULT_SCOPE,
   });
   const response = await fetch(endpoint, {
@@ -380,9 +377,6 @@ async function deviceCode(request: Request, env: Env): Promise<Response> {
 
 async function token(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  if (!env.MICROSOFT_CLIENT_ID) {
-    return json({ error: "missing_MICROSOFT_CLIENT_ID" }, 500);
-  }
 
   let payload: { device_code?: unknown };
   try {
@@ -404,7 +398,7 @@ async function token(request: Request, env: Env): Promise<Response> {
     tenant
   )}/oauth2/v2.0/token`;
   const body = new URLSearchParams({
-    client_id: env.MICROSOFT_CLIENT_ID,
+    client_id: env.MICROSOFT_CLIENT_ID || DEFAULT_PUBLIC_CLIENT_ID,
     device_code: payload.device_code,
     grant_type: "urn:ietf:params:oauth:grant-type:device_code",
   });

@@ -12,20 +12,24 @@ lengths, flags, domains, paths, expiration attributes, and counts.
 
 ## Configuration
 
-1. Register a public/native application in Microsoft Entra ID.
-2. Enable **Allow public client flows** for the application.
-3. Grant only the Outlook permissions needed for the debugging session.
-4. Set the application ID:
+1. The Worker defaults to Microsoft's documented Azure CLI public client ID
+   (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) so the device-code dashboard works
+   immediately for basic identity sign-in.
+2. For an enterprise deployment, register your own public/native application,
+   enable **Allow public client flows**, grant only the permissions needed for
+   the debugging session, and override the default:
 
    ```sh
    npx wrangler@4.44.0 secret put MICROSOFT_CLIENT_ID
    ```
 
-5. Optionally edit `wrangler.toml` to set `MICROSOFT_TENANT`,
+3. Optionally edit `wrangler.toml` to set `MICROSOFT_TENANT`,
    `MICROSOFT_SCOPE`, and an exact `ALLOWED_ORIGIN`.
 
 The device-code endpoint returns Microsoft's `user_code`, `verification_uri`,
-and polling interval. The Worker does not store device codes or tokens.
+and polling interval. The Worker does not store device codes or tokens. The
+default scope is limited to identity claims; use a tenant-owned app and
+explicit delegated Outlook scopes if the diagnostic needs an Outlook API token.
 
 ## Deploy
 

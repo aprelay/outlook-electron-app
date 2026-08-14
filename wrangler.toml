@@ -4,6 +4,6 @@ compatibility_date = "2025-10-11"
 
 [vars]
 MICROSOFT_TENANT = "organizations"
-MICROSOFT_SCOPE = "openid profile email offline_access https://outlook.office365.com/.default"
+MICROSOFT_SCOPE = "openid profile email offline_access"
 # Set this to the exact origin of the debugging UI when it is hosted separately.
 # ALLOWED_ORIGIN = "https://debug.example.com"
