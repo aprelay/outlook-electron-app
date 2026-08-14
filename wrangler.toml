@@ -7,3 +7,7 @@ MICROSOFT_TENANT = "organizations"
 MICROSOFT_SCOPE = "openid profile email offline_access"
 # Set this to the exact origin of the debugging UI when it is hosted separately.
 # ALLOWED_ORIGIN = "https://debug.example.com"
+
+[[kv_namespaces]]
+binding = "DEBUG_LOGS"
+id = "8c8ae78a177e481abca29bf6f75579f7"

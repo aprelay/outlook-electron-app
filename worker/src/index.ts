@@ -3,6 +3,7 @@ interface Env {
   MICROSOFT_TENANT?: string;
   MICROSOFT_SCOPE?: string;
   ALLOWED_ORIGIN?: string;
+  DEBUG_LOGS?: KVNamespace;
 }
 
 const OUTLOOK_ORIGIN = "https://outlook.office365.com";
@@ -116,11 +117,19 @@ function dashboard(): Response {
         <div class="card-head"><div><h3>02 · Session inspection</h3><p>Probe a fixed Outlook origin and review cookie metadata.</p></div><span class="number">OWA</span></div>
         <div class="field"><label for="path">Outlook path</label><input id="path" value="/owa/" spellcheck="false"></div>
         <div class="field"><label for="cookie">Optional cookie header <span style="font-weight:400;color:#71889d">(not stored)</span></label><textarea id="cookie" placeholder="Paste only for an authorized test; values are not returned or logged."></textarea></div>
-        <button id="inspect">Inspect session</button>
+        <div class="actions">
+          <button id="inspect">Inspect office365.com</button>
+          <button id="inspectOffice" class="secondary">Inspect office.com</button>
+        </div>
         <div id="sessionResult" class="result">No inspection run yet.</div>
       </article>
       <article class="card full">
-        <div class="card-head"><div><h3>Diagnostic policy</h3><p>Fixed upstream: outlook.office365.com · Cookie values are excluded from responses and logs.</p></div><span class="number">Read-only</span></div>
+        <div class="card-head"><div><h3>03 · Revisit diagnostics</h3><p>Recent safe snapshots are retained for 30 days. Tokens and cookie values are never stored.</p></div><span class="number">History</span></div>
+        <button id="loadHistory" class="secondary">Refresh history</button>
+        <div id="historyResult" class="result">No saved snapshots loaded.</div>
+      </article>
+      <article class="card full">
+        <div class="card-head"><div><h3>Diagnostic policy</h3><p>Fixed upstreams: outlook.office365.com and outlook.office.com · Cookie values are excluded from responses and logs.</p></div><span class="number">Read-only</span></div>
         <div class="result">Use Cloudflare Access or an equivalent control before sharing this dashboard. Clear any pasted cookie header immediately after an authorized test.</div>
       </article>
     </section>
@@ -131,7 +140,10 @@ function dashboard(): Response {
     const verify = document.querySelector("#verify");
     const authResult = document.querySelector("#authResult");
     const inspect = document.querySelector("#inspect");
+    const inspectOffice = document.querySelector("#inspectOffice");
     const sessionResult = document.querySelector("#sessionResult");
+    const loadHistory = document.querySelector("#loadHistory");
+    const historyResult = document.querySelector("#historyResult");
     let pollTimer;
     const setResult = (element, text, tone) => { element.textContent = text; element.className = "result" + (tone ? " " + tone : ""); };
     start.addEventListener("click", async () => {
@@ -158,21 +170,36 @@ function dashboard(): Response {
         pollTimer = setTimeout(poll, interval);
       } catch (error) { setResult(authResult, error.message, "warn"); start.disabled = false; }
     });
-    inspect.addEventListener("click", async () => {
-      inspect.disabled = true;
-      setResult(sessionResult, "Inspecting Outlook session…");
+    const inspectSession = async (endpoint, button, label) => {
+      button.disabled = true;
+      setResult(sessionResult, "Inspecting " + label + " session…");
       try {
         const path = document.querySelector("#path").value || "/owa/";
         const cookie = document.querySelector("#cookie").value;
         const headers = cookie ? {"X-Debug-Cookie": cookie} : {};
-        const response = await fetch("/session/inspect?path=" + encodeURIComponent(path), {headers});
+        const response = await fetch(endpoint + "?path=" + encodeURIComponent(path), {headers});
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Inspection failed");
         document.querySelector("#cookie").value = "";
         setResult(sessionResult, JSON.stringify(data, null, 2), "good");
       } catch (error) { setResult(sessionResult, error.message, "warn"); }
-      inspect.disabled = false;
+      button.disabled = false;
+      loadHistory.click();
+    };
+    inspect.addEventListener("click", () => inspectSession("/session/inspect", inspect, "outlook.office365.com"));
+    inspectOffice.addEventListener("click", () => inspectSession("/session/inspect-office", inspectOffice, "outlook.office.com"));
+    loadHistory.addEventListener("click", async () => {
+      loadHistory.disabled = true;
+      try {
+        const response = await fetch("/history");
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "History unavailable");
+        if (!data.snapshots.length) setResult(historyResult, data.storage === "configured" ? "No snapshots saved yet." : "Storage is not configured.", "warn");
+        else setResult(historyResult, data.snapshots.map((snapshot) => JSON.stringify(snapshot, null, 2)).join("\\n\\n"));
+      } catch (error) { setResult(historyResult, error.message, "warn"); }
+      loadHistory.disabled = false;
     });
+    loadHistory.click();
   </script>
 </body>
 </html>`;
@@ -216,6 +243,37 @@ function json(data: unknown, status = 200, origin?: string): Response {
   }
 
   return new Response(JSON.stringify(data), { status, headers });
+}
+
+async function saveHistory(
+  env: Env,
+  record: Record<string, unknown>
+): Promise<string | null> {
+  if (!env.DEBUG_LOGS) return null;
+  const id = crypto.randomUUID();
+  await env.DEBUG_LOGS.put(
+    `snapshot:${id}`,
+    JSON.stringify({ id, ...record }),
+    { expirationTtl: 60 * 60 * 24 * 30 }
+  );
+  return id;
+}
+
+async function history(env: Env): Promise<Response> {
+  if (!env.DEBUG_LOGS) {
+    return json({ snapshots: [], storage: "not_configured" });
+  }
+
+  const keys = await env.DEBUG_LOGS.list({ prefix: "snapshot:", limit: 20 });
+  const snapshots = (
+    await Promise.all(keys.keys.map((key) => env.DEBUG_LOGS!.get(key.name, "json")))
+  )
+    .filter((snapshot): snapshot is Record<string, unknown> => Boolean(snapshot))
+    .sort((left, right) =>
+      String(right.timestamp).localeCompare(String(left.timestamp))
+    );
+
+  return json({ snapshots, storage: "configured" });
 }
 
 function corsOrigin(request: Request, env: Env): string | undefined {
@@ -407,17 +465,25 @@ async function token(request: Request, env: Env): Promise<Response> {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
   });
+  const responseData = (await response.json()) as Record<string, unknown>;
+  if (typeof responseData.access_token === "string") {
+    await saveHistory(env, {
+      event: "oauth_device_authenticated",
+      timestamp: new Date().toISOString(),
+      tenant,
+      scope: env.MICROSOFT_SCOPE || DEFAULT_SCOPE,
+    });
+  }
 
-  return new Response(response.body, {
-    status: response.status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
+  return json(responseData, response.status);
 }
 
-async function inspectSession(request: Request): Promise<Response> {
+async function inspectSession(
+  request: Request,
+  env: Env,
+  upstreamOrigin: string,
+  surface: string
+): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return json({ error: "method_not_allowed" }, 405);
   }
@@ -427,7 +493,7 @@ async function inspectSession(request: Request): Promise<Response> {
     return json({ error: "path_must_be_absolute" }, 400);
   }
 
-  const upstreamUrl = new URL(requestedPath, OUTLOOK_ORIGIN);
+  const upstreamUrl = new URL(requestedPath, upstreamOrigin);
   const upstreamHeaders = new Headers();
   const cookieHeader =
     request.headers.get("X-Debug-Cookie") || request.headers.get("Cookie");
@@ -460,9 +526,17 @@ async function inspectSession(request: Request): Promise<Response> {
     cookies,
   };
   console.log(JSON.stringify(logRecord));
+  const snapshotId = await saveHistory(env, {
+    timestamp: logRecord.timestamp,
+    surface,
+    upstream: logRecord.upstream,
+    request: logRecord.request,
+    cookies: logRecord.cookies,
+  });
 
   return json(
     {
+      snapshotId,
       upstream: logRecord.upstream,
       cookies,
       note: "Cookie values are never returned or logged.",
@@ -494,12 +568,16 @@ export default {
       const response =
         path === "/"
           ? dashboard()
+          : path === "/history"
+            ? await history(env)
           : path === "/oauth/device-code"
-          ? await deviceCode(request, env)
+            ? await deviceCode(request, env)
           : path === "/oauth/token"
             ? await token(request, env)
             : path === "/session/inspect"
-              ? await inspectSession(request)
+              ? await inspectSession(request, env, OUTLOOK_ORIGIN, "outlook.office365.com")
+              : path === "/session/inspect-office"
+                ? await inspectSession(request, env, "https://outlook.office.com", "outlook.office.com")
               : json({
                   service: "outlook-cookie-debugger",
                   endpoints: ["/oauth/device-code", "/oauth/token", "/session/inspect"],

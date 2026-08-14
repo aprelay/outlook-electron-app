@@ -6,9 +6,13 @@ This Worker exposes three small debugging endpoints:
 - `POST /oauth/token` polls the flow with `{ "device_code": "..." }`.
 - `GET /session/inspect?path=/owa/` makes a controlled request to
   `outlook.office365.com` and reports request-cookie and `Set-Cookie` metadata.
+- `GET /session/inspect-office?path=/owa/` performs the same probe against
+  `outlook.office.com`.
+- `GET /history` returns recent safe diagnostic snapshots retained for 30 days.
 
-Cookie values are never returned or written to logs. The metadata includes names,
-lengths, flags, domains, paths, expiration attributes, and counts.
+Cookie values, OAuth tokens, and device codes are never persisted or written to
+logs. The metadata includes names, lengths, flags, domains, paths, expiration
+attributes, and counts.
 
 ## Configuration
 
