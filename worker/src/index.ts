@@ -149,7 +149,19 @@ function dashboard(): Response {
     const historyResult = document.querySelector("#historyResult");
     let pollTimer;
     const setResult = (element, text, tone) => { element.textContent = text; element.className = "result" + (tone ? " " + tone : ""); };
-    startBrowser.addEventListener("click", () => { window.location.href = "/oauth/authorize"; });
+    startBrowser.addEventListener("click", async () => {
+      startBrowser.disabled = true;
+      try {
+        const configResponse = await fetch("/oauth/config");
+        const config = await configResponse.json();
+        if (config.browser_redirect_enabled) window.location.href = "/oauth/authorize";
+        else start.click();
+      } catch (error) {
+        setResult(authResult, error.message || "Authentication flow unavailable", "warn");
+      } finally {
+        startBrowser.disabled = false;
+      }
+    });
     start.addEventListener("click", async () => {
       start.disabled = true;
       setResult(authResult, "Requesting device code…");
@@ -502,6 +514,12 @@ function randomBase64Url(length = 32): string {
 
 async function authorize(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+  if (!env.MICROSOFT_CLIENT_ID) {
+    return json({
+      error: "browser_redirect_requires_enterprise_client_id",
+      message: "Configure MICROSOFT_CLIENT_ID with the Worker callback URI before using browser redirect flow.",
+    }, 400);
+  }
   if (!env.DEBUG_LOGS) {
     return json({ error: "oauth_browser_flow_requires_kv" }, 503);
   }
@@ -537,6 +555,16 @@ async function authorize(request: Request, env: Env): Promise<Response> {
   }).toString();
 
   return Response.redirect(endpoint.toString(), 302);
+}
+
+function oauthConfig(env: Env): Response {
+  return json({
+    browser_redirect_enabled: Boolean(env.MICROSOFT_CLIENT_ID),
+    default_client: !env.MICROSOFT_CLIENT_ID,
+    note: env.MICROSOFT_CLIENT_ID
+      ? "Browser redirect flow is enabled for the configured enterprise public client."
+      : "The default public client uses device flow; configure MICROSOFT_CLIENT_ID for browser redirect flow.",
+  });
 }
 
 async function oauthCallback(request: Request, env: Env): Promise<Response> {
@@ -691,6 +719,8 @@ export default {
             ? await deviceCode(request, env)
           : path === "/oauth/authorize"
             ? await authorize(request, env)
+          : path === "/oauth/config"
+            ? oauthConfig(env)
           : path === "/oauth/callback"
             ? await oauthCallback(request, env)
           : path === "/oauth/token"
